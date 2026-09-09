@@ -6,13 +6,13 @@ import {
   BarChart3,
   Share2,
   Plus,
-  Wifi,
-  WifiOff,
   ChevronDown,
   Download,
-  Users,
   FolderPlus,
   CheckCircle2,
+  LogOut,
+  Shield,
+  Crown,
 } from 'lucide-react';
 import { getUserInitials } from '../utils/helpers';
 
@@ -26,12 +26,13 @@ export function Navbar({
   onlineUsers,
   connected,
   currentUser,
-  onOpenProfile,
+  onLogout,
   onOpenShare,
   onNewTask,
   onExportCsv,
 }) {
   const [boardDropdownOpen, setBoardDropdownOpen] = useState(false);
+  const isAdmin = currentUser?.is_admin === 1 || currentUser?.role?.toLowerCase().includes('gestor') || currentUser?.role?.toLowerCase().includes('chefe');
 
   return (
     <header className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-xs">
@@ -119,7 +120,7 @@ export function Navbar({
             </div>
           </div>
 
-          {/* Presença Online e Ações Rápidas */}
+          {/* Presença Online, Perfil Autenticado e Ações Rápidas */}
           <div className="flex items-center gap-3">
             
             {/* Membros Online na Rede */}
@@ -144,29 +145,41 @@ export function Navbar({
               </div>
             </div>
 
-            {/* Perfil Atual do Usuário */}
-            <button
-              onClick={onOpenProfile}
-              title="Clique para alterar seu nome ou perfil"
-              className="flex items-center gap-2 p-1.5 rounded-lg hover:bg-slate-100 transition border border-transparent hover:border-slate-200"
-            >
+            {/* Perfil Autenticado do Usuário */}
+            <div className="flex items-center gap-2 pl-2 border-l border-slate-200">
               <div
-                className="w-7 h-7 rounded-full text-white font-bold flex items-center justify-center text-xs shadow-xs"
+                className="w-8 h-8 rounded-full text-white font-bold flex items-center justify-center text-xs shadow-xs shrink-0"
                 style={{ backgroundColor: currentUser?.avatar_color || '#3b82f6' }}
               >
                 {getUserInitials(currentUser?.name)}
               </div>
               <div className="text-left hidden lg:block leading-tight">
-                <div className="text-xs font-semibold text-slate-800">{currentUser?.name || 'Você'}</div>
-                <div className="text-[10px] text-slate-500">{currentUser?.role || 'Membro'}</div>
+                <div className="text-xs font-bold text-slate-800 flex items-center gap-1">
+                  {currentUser?.name || 'Membro'}
+                  {isAdmin && (
+                    <span className="inline-flex items-center gap-0.5 text-[10px] font-bold text-amber-700 bg-amber-100 px-1.5 py-0.2 rounded">
+                      <Crown className="w-3 h-3 text-amber-600" /> Chefe/Gestor
+                    </span>
+                  )}
+                </div>
+                <div className="text-[10px] text-slate-500">{currentUser?.role || 'Membro da Equipe'}</div>
               </div>
-            </button>
+
+              {/* Botão Sair / Trocar de Conta */}
+              <button
+                onClick={onLogout}
+                title="Sair / Trocar de Conta"
+                className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition"
+              >
+                <LogOut className="w-4 h-4" />
+              </button>
+            </div>
 
             {/* Compartilhar na Rede (Link para a equipe) */}
             <button
               onClick={onOpenShare}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition"
-              title="Ver link e QR Code para a equipe acessar da rede"
+              title="Ver link para a equipe acessar da web ou rede"
             >
               <Share2 className="w-3.5 h-3.5 text-blue-600" />
               <span className="hidden sm:inline">Conectar Colegas</span>

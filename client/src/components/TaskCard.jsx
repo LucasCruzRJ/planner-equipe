@@ -5,12 +5,12 @@ import {
   MessageSquare,
   AlertTriangle,
   Clock,
-  CheckCircle2,
   Tag,
+  Lock,
 } from 'lucide-react';
 import { formatDueDate, getPriorityMeta, getUserInitials } from '../utils/helpers';
 
-export function TaskCard({ task, users, onOpenTask, provided, isDragging }) {
+export function TaskCard({ task, users, currentUser, onOpenTask, provided, isDragging }) {
   const priorityMeta = getPriorityMeta(task.priority);
   const dueInfo = formatDueDate(task.due_date);
 
@@ -24,27 +24,51 @@ export function TaskCard({ task, users, onOpenTask, provided, isDragging }) {
     .map((uid) => users.find((u) => u.id === uid))
     .filter(Boolean);
 
+  // Verificação de Permissão:
+  // O usuário logado pode editar/mover esta tarefa?
+  const isAdmin = currentUser?.is_admin === 1 || currentUser?.role?.toLowerCase().includes('gestor') || currentUser?.role?.toLowerCase().includes('chefe');
+  const isCreator = (task.created_by_user_id && task.created_by_user_id === currentUser?.id) || (!task.created_by_user_id && task.created_by === currentUser?.name);
+  const isAssignee = (task.assignees || []).includes(currentUser?.id);
+  const canModify = isAdmin || isCreator || isAssignee;
+
   return (
     <div
       ref={provided?.innerRef}
       {...provided?.draggableProps}
       {...provided?.dragHandleProps}
       onClick={() => onOpenTask(task)}
-      className={`group relative bg-white rounded-xl p-3.5 border border-slate-200/90 shadow-xs hover:shadow-md hover:border-blue-400/80 transition-all cursor-pointer select-none ${
+      className={`group relative bg-white rounded-xl p-3.5 border transition-all cursor-pointer select-none ${
+        canModify
+          ? 'border-slate-200/90 hover:border-blue-400/80 shadow-xs hover:shadow-md'
+          : 'border-slate-200/70 bg-slate-50/40 hover:border-amber-300 shadow-2xs'
+      } ${
         isDragging ? 'shadow-2xl ring-2 ring-blue-500 rotate-1 scale-[1.02] z-50' : ''
       }`}
     >
-      {/* Barra superior de prioridade e tags */}
+      {/* Barra superior de prioridade, cadeado e tags */}
       <div className="flex items-center justify-between gap-2 mb-2">
-        <span
-          className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full border ${priorityMeta.badge}`}
-        >
-          <span className={`w-1.5 h-1.5 rounded-full ${priorityMeta.dot}`} />
-          {priorityMeta.label}
-        </span>
+        <div className="flex items-center gap-1.5">
+          <span
+            className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full border ${priorityMeta.badge}`}
+          >
+            <span className={`w-1.5 h-1.5 rounded-full ${priorityMeta.dot}`} />
+            {priorityMeta.label}
+          </span>
+
+          {/* Indicador de Cadeado / Modo Leitura se não for o dono */}
+          {!canModify && (
+            <span
+              title={`Esta tarefa pertence a ${task.created_by || 'outro colega'}. Apenas visualização permitida.`}
+              className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200/80"
+            >
+              <Lock className="w-2.5 h-2.5" />
+              <span>{task.created_by ? task.created_by.split(' ')[0] : 'Colega'}</span>
+            </span>
+          )}
+        </div>
 
         {/* Tags / Etiquetas */}
-        <div className="flex flex-wrap gap-1 items-center max-w-[60%] justify-end overflow-hidden">
+        <div className="flex flex-wrap gap-1 items-center max-w-[50%] justify-end overflow-hidden">
           {(task.tags || []).slice(0, 2).map((tag, idx) => (
             <span
               key={idx}

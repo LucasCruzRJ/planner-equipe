@@ -7,23 +7,16 @@ import { CalendarView } from './components/CalendarView';
 import { DashboardView } from './components/DashboardView';
 import { TaskModal } from './components/TaskModal';
 import { NewTaskModal } from './components/NewTaskModal';
-import { UserProfileModal } from './components/UserProfileModal';
 import { NewBoardModal } from './components/NewBoardModal';
 import { ShareModal } from './components/ShareModal';
+import { LoginModal } from './components/LoginModal';
 import { NotificationToast } from './components/NotificationToast';
 import { usePlannerSocket } from './hooks/usePlannerSocket';
 import { formatDueDate } from './utils/helpers';
 
 export function App() {
-  // Estado de Dados
-  const [boards, setBoards] = useState([]);
-  const [activeBoard, setActiveBoard] = useState(null);
-  const [columns, setColumns] = useState([]);
-  const [tasks, setTasks] = useState([]);
-  const [users, setUsers] = useState([]);
-  const [loading, setLoading] = useState(true);
-
-  // Estado do Usuário Atual (armazenado em localStorage para persistência por computador)
+  // Estado de Autenticação
+  const [authToken, setAuthToken] = useState(() => localStorage.getItem('planner_token') || null);
   const [currentUser, setCurrentUser] = useState(() => {
     try {
       const saved = localStorage.getItem('planner_user');
@@ -32,6 +25,14 @@ export function App() {
       return null;
     }
   });
+
+  // Estado de Dados do Planner
+  const [boards, setBoards] = useState([]);
+  const [activeBoard, setActiveBoard] = useState(null);
+  const [columns, setColumns] = useState([]);
+  const [tasks, setTasks] = useState([]);
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
 
   // Visualização Ativa: 'board' | 'list' | 'calendar' | 'dashboard'
   const [activeView, setActiveView] = useState('board');
@@ -49,7 +50,6 @@ export function App() {
   const [isNewTaskOpen, setIsNewTaskOpen] = useState(false);
   const [newTaskColumnId, setNewTaskColumnId] = useState(null);
   const [newTaskDueDate, setNewTaskDueDate] = useState(null);
-  const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isNewBoardOpen, setIsNewBoardOpen] = useState(false);
   const [isShareOpen, setIsShareOpen] = useState(false);
 
@@ -59,9 +59,18 @@ export function App() {
     currentUser
   );
 
-  // 1. Carregar lista de usuários e quadros iniciais
+  // Helper para headers autenticados
+  const authHeaders = useCallback(() => {
+    const headers = { 'Content-Type': 'application/json' };
+    if (authToken) {
+      headers['Authorization'] = `Bearer ${authToken}`;
+    }
+    return headers;
+  }, [authToken]);
+
+  // 1. Carregar lista de usuários e validar sessão
   useEffect(() => {
-    async function loadInitialData() {
+    async function initApp() {
       try {
         setLoading(true);
         const [usersRes, boardsRes] = await Promise.all([
@@ -75,25 +84,36 @@ export function App() {
         setUsers(usersData);
         setBoards(boardsData);
 
-        // Se o usuário ainda não escolheu um perfil, definir o primeiro ou visitante
-        if (!currentUser && usersData.length > 0) {
-          const defaultUser = usersData[0];
-          setCurrentUser(defaultUser);
-          localStorage.setItem('planner_user', JSON.stringify(defaultUser));
-        }
-
-        // Definir primeiro quadro ativo
         if (boardsData.length > 0) {
           setActiveBoard(boardsData[0]);
         }
+
+        // Validar token existente
+        const token = localStorage.getItem('planner_token');
+        if (token) {
+          const meRes = await fetch('/api/auth/me', {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (meRes.ok) {
+            const meData = await meRes.json();
+            setCurrentUser(meData.user);
+            localStorage.setItem('planner_user', JSON.stringify(meData.user));
+          } else {
+            // Token expirado
+            setAuthToken(null);
+            setCurrentUser(null);
+            localStorage.removeItem('planner_token');
+            localStorage.removeItem('planner_user');
+          }
+        }
       } catch (err) {
-        console.error('Erro ao carregar dados iniciais:', err);
+        console.error('Erro ao inicializar app:', err);
       } finally {
         setLoading(false);
       }
     }
 
-    loadInitialData();
+    initApp();
   }, []);
 
   // 2. Carregar colunas e tarefas do quadro ativo
@@ -117,7 +137,7 @@ export function App() {
     }
   }, [activeBoard?.id, loadBoardData]);
 
-  // 3. Registrar Callbacks de Eventos de Tempo Real (Socket.IO)
+  // 3. Callbacks de Sincronização em Tempo Real (Socket.IO)
   useEffect(() => {
     registerCallbacks({
       onTaskChange: (action, data) => {
@@ -130,7 +150,7 @@ export function App() {
           setTasks((prev) => prev.map((t) => (t.id === data.id ? { ...t, ...data } : t)));
           setActiveTask((prev) => (prev && prev.id === data.id ? { ...prev, ...data } : prev));
         } else if (action === 'move') {
-          const { taskId, destColId, allDestTaskIds } = data;
+          const { taskId, destColId } = data;
           setTasks((prev) => {
             return prev.map((t) => {
               if (t.id === taskId) {
@@ -237,27 +257,27 @@ export function App() {
     });
   }, [registerCallbacks]);
 
-  // Ações de Usuários
-  const handleSelectUser = (user) => {
+  // Ações de Login e Logout
+  const handleLogin = (user, token) => {
     setCurrentUser(user);
+    setAuthToken(token);
     localStorage.setItem('planner_user', JSON.stringify(user));
+    localStorage.setItem('planner_token', token);
   };
 
-  const handleCreateUser = async (userData) => {
-    try {
-      const res = await fetch('/api/users', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(userData),
-      });
-      if (res.ok) {
-        const newUser = await res.json();
-        setUsers((prev) => [...prev, newUser]);
-        handleSelectUser(newUser);
-      }
-    } catch (err) {
-      console.error('Erro ao criar usuário:', err);
-    }
+  const handleRegister = (user, token) => {
+    setCurrentUser(user);
+    setAuthToken(token);
+    setUsers((prev) => [...prev, user]);
+    localStorage.setItem('planner_user', JSON.stringify(user));
+    localStorage.setItem('planner_token', token);
+  };
+
+  const handleLogout = () => {
+    setCurrentUser(null);
+    setAuthToken(null);
+    localStorage.removeItem('planner_user');
+    localStorage.removeItem('planner_token');
   };
 
   // Ações de Quadros
@@ -265,7 +285,7 @@ export function App() {
     try {
       const res = await fetch('/api/boards', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(),
         body: JSON.stringify(boardData),
       });
       if (res.ok) {
@@ -284,7 +304,7 @@ export function App() {
     try {
       const res = await fetch('/api/columns', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(),
         body: JSON.stringify({ board_id: activeBoard.id, title }),
       });
       if (res.ok) {
@@ -303,7 +323,7 @@ export function App() {
     try {
       await fetch(`/api/columns/${columnId}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(),
         body: JSON.stringify(fields),
       });
       setColumns((prev) => prev.map((c) => (c.id === columnId ? { ...c, ...fields } : c)));
@@ -314,7 +334,10 @@ export function App() {
 
   const handleDeleteColumn = async (columnId) => {
     try {
-      await fetch(`/api/columns/${columnId}`, { method: 'DELETE' });
+      await fetch(`/api/columns/${columnId}`, {
+        method: 'DELETE',
+        headers: authHeaders(),
+      });
       setColumns((prev) => prev.filter((c) => c.id !== columnId));
       setTasks((prev) => prev.filter((t) => t.column_id !== columnId));
     } catch (err) {
@@ -322,20 +345,19 @@ export function App() {
     }
   };
 
-  // Ações de Tarefas
+  // Ações de Tarefas com Autenticação
   const handleCreateTask = async (taskData) => {
     try {
       const { initialSubtasks, ...rest } = taskData;
       const res = await fetch('/api/tasks', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(),
         body: JSON.stringify(rest),
       });
 
       if (res.ok) {
         const newTask = await res.json();
         
-        // Criar subtarefas iniciais caso existam
         if (initialSubtasks && initialSubtasks.length > 0) {
           for (const stTitle of initialSubtasks) {
             await handleAddSubtask(newTask.id, stTitle);
@@ -360,18 +382,24 @@ export function App() {
         setActiveTask((prev) => ({ ...prev, ...fields }));
       }
 
-      await fetch(`/api/tasks/${taskId}`, {
+      const res = await fetch(`/api/tasks/${taskId}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(),
         body: JSON.stringify(fields),
       });
+
+      if (!res.ok) {
+        const errData = await res.json();
+        alert(errData.error || 'Não foi possível atualizar a tarefa.');
+        // Reverter recarregando o quadro
+        if (activeBoard?.id) loadBoardData(activeBoard.id);
+      }
     } catch (err) {
       console.error('Erro ao atualizar tarefa:', err);
     }
   };
 
   const handleReorderTasks = async ({ taskId, sourceColId, destColId, sourceIndex, destIndex, allDestTaskIds }) => {
-    // Atualização otimista no estado local
     setTasks((prev) => {
       return prev.map((t) => {
         if (t.id === taskId) {
@@ -382,9 +410,9 @@ export function App() {
     });
 
     try {
-      await fetch('/api/tasks/reorder', {
+      const res = await fetch('/api/tasks/reorder', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(),
         body: JSON.stringify({
           taskId,
           sourceColId,
@@ -394,6 +422,12 @@ export function App() {
           allDestTaskIds,
         }),
       });
+
+      if (!res.ok) {
+        const errData = await res.json();
+        alert(errData.error || 'Não foi possível mover a tarefa.');
+        if (activeBoard?.id) loadBoardData(activeBoard.id);
+      }
     } catch (err) {
       console.error('Erro ao reordenar tarefas:', err);
     }
@@ -401,8 +435,16 @@ export function App() {
 
   const handleDeleteTask = async (taskId) => {
     try {
-      await fetch(`/api/tasks/${taskId}`, { method: 'DELETE' });
-      setTasks((prev) => prev.filter((t) => t.id !== taskId));
+      const res = await fetch(`/api/tasks/${taskId}`, {
+        method: 'DELETE',
+        headers: authHeaders(),
+      });
+      if (res.ok) {
+        setTasks((prev) => prev.filter((t) => t.id !== taskId));
+      } else {
+        const errData = await res.json();
+        alert(errData.error || 'Não foi possível excluir a tarefa.');
+      }
     } catch (err) {
       console.error('Erro ao excluir tarefa:', err);
     }
@@ -413,7 +455,7 @@ export function App() {
     try {
       const res = await fetch(`/api/tasks/${taskId}/subtasks`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(),
         body: JSON.stringify({ title }),
       });
       if (res.ok) {
@@ -443,10 +485,9 @@ export function App() {
     try {
       await fetch(`/api/subtasks/${subtaskId}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(),
         body: JSON.stringify({ completed }),
       });
-      // Atualização otimista
       setTasks((prev) =>
         prev.map((t) => ({
           ...t,
@@ -470,7 +511,10 @@ export function App() {
 
   const handleDeleteSubtask = async (subtaskId) => {
     try {
-      await fetch(`/api/subtasks/${subtaskId}`, { method: 'DELETE' });
+      await fetch(`/api/subtasks/${subtaskId}`, {
+        method: 'DELETE',
+        headers: authHeaders(),
+      });
       setTasks((prev) =>
         prev.map((t) => ({
           ...t,
@@ -492,7 +536,7 @@ export function App() {
     try {
       const res = await fetch(`/api/tasks/${taskId}/comments`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(),
         body: JSON.stringify(commentData),
       });
       if (res.ok) {
@@ -522,17 +566,14 @@ export function App() {
     window.open(`/api/export/${activeBoard.id}?format=csv`, '_blank');
   };
 
-  // Extrair todas as tags disponíveis no quadro para o filtro
   const availableTags = useMemo(() => {
     const set = new Set();
     tasks.forEach((t) => (t.tags || []).forEach((tag) => set.add(tag)));
     return Array.from(set);
   }, [tasks]);
 
-  // Filtragem de Tarefas
   const filteredTasks = useMemo(() => {
     return tasks.filter((t) => {
-      // 1. Busca por Texto (título, descrição, autor)
       if (searchQuery.trim()) {
         const query = searchQuery.toLowerCase();
         const inTitle = (t.title || '').toLowerCase().includes(query);
@@ -541,27 +582,23 @@ export function App() {
         if (!inTitle && !inDesc && !inAuthor) return false;
       }
 
-      // 2. Filtro por Responsável
       if (selectedAssignee) {
         if (!(t.assignees || []).includes(selectedAssignee)) return false;
       }
 
-      // 3. Filtro por Prioridade
       if (selectedPriority) {
         if (t.priority !== selectedPriority) return false;
       }
 
-      // 4. Filtro por Tag
       if (selectedTag) {
         if (!(t.tags || []).includes(selectedTag)) return false;
       }
 
-      // 5. Filtro: Apenas Minhas Tarefas
       if (onlyMyTasks && currentUser?.id) {
-        if (!(t.assignees || []).includes(currentUser.id)) return false;
+        const isMine = (t.assignees || []).includes(currentUser.id) || t.created_by_user_id === currentUser.id;
+        if (!isMine) return false;
       }
 
-      // 6. Filtro: Apenas Atrasadas
       if (onlyOverdue) {
         const due = formatDueDate(t.due_date);
         if (!due || due.status !== 'overdue') return false;
@@ -592,6 +629,15 @@ export function App() {
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans">
       
+      {/* Se o usuário não estiver autenticado, exibe a tela de Login/Cadastro */}
+      {!currentUser && (
+        <LoginModal
+          users={users}
+          onLogin={handleLogin}
+          onRegister={handleRegister}
+        />
+      )}
+
       {/* 1. Barra de Navegação Principal */}
       <Navbar
         boards={boards}
@@ -603,7 +649,7 @@ export function App() {
         onlineUsers={onlineUsers}
         connected={connected}
         currentUser={currentUser}
-        onOpenProfile={() => setIsProfileOpen(true)}
+        onLogout={handleLogout}
         onOpenShare={() => setIsShareOpen(true)}
         onNewTask={() => {
           setNewTaskColumnId(columns[0]?.id);
@@ -648,6 +694,7 @@ export function App() {
                 columns={columns}
                 tasks={filteredTasks}
                 users={users}
+                currentUser={currentUser}
                 onOpenTask={(task) => setActiveTask(task)}
                 onNewTaskInColumn={(colId) => {
                   setNewTaskColumnId(colId);
@@ -658,6 +705,7 @@ export function App() {
                 onCreateColumn={handleCreateColumn}
                 onUpdateColumn={handleUpdateColumn}
                 onDeleteColumn={handleDeleteColumn}
+                onPermissionError={(msg) => alert(msg)}
               />
             )}
 
@@ -666,6 +714,7 @@ export function App() {
                 tasks={filteredTasks}
                 columns={columns}
                 users={users}
+                currentUser={currentUser}
                 onOpenTask={(task) => setActiveTask(task)}
                 onNewTask={() => {
                   setNewTaskColumnId(columns[0]?.id);
@@ -726,16 +775,6 @@ export function App() {
           initialDueDate={newTaskDueDate}
           onClose={() => setIsNewTaskOpen(false)}
           onCreateTask={handleCreateTask}
-        />
-      )}
-
-      {isProfileOpen && (
-        <UserProfileModal
-          users={users}
-          currentUser={currentUser}
-          onSelectUser={handleSelectUser}
-          onCreateUser={handleCreateUser}
-          onClose={() => setIsProfileOpen(false)}
         />
       )}
 

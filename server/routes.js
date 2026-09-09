@@ -3,14 +3,157 @@ import db from './database.js';
 import { broadcastEvent } from './sockets.js';
 import { getLocalIpAddresses } from './ipHelper.js';
 import { getPublicTunnelUrl } from './tunnel.js';
+import { hashPassword, verifyPassword, generateToken, getUserIdFromToken } from './auth.js';
 
 const router = express.Router();
 
-// Helper para gerar IDs únicos amigáveis
 const generateId = (prefix = 'id') => `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).substr(2, 5)}`;
 
+// Middleware auxiliar para obter o usuário autenticado na requisição
+function getAuthUser(req) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return null;
+  }
+  const token = authHeader.split(' ')[1];
+  const userId = getUserIdFromToken(token);
+  if (!userId) return null;
+
+  const user = db.prepare('SELECT id, name, email, role, is_admin, avatar_color FROM users WHERE id = ?').get(userId);
+  return user || null;
+}
+
+// Verifica se o usuário tem permissão para alterar ou mover uma tarefa
+function canUserModifyTask(user, task) {
+  if (!user) return false;
+  // 1. Gestores / Administradores (Chefe) têm permissão total
+  if (user.is_admin === 1 || user.role?.toLowerCase().includes('gestor') || user.role?.toLowerCase().includes('chefe')) {
+    return true;
+  }
+  // 2. Criador da tarefa tem permissão total
+  if (task.created_by_user_id && task.created_by_user_id === user.id) {
+    return true;
+  }
+  if (!task.created_by_user_id && task.created_by === user.name) {
+    return true;
+  }
+  // 3. Membros atribuídos na tarefa
+  const assignees = Array.isArray(task.assignees) ? task.assignees : JSON.parse(task.assignees || '[]');
+  if (assignees.includes(user.id)) {
+    return true;
+  }
+  return false;
+}
+
 // ==========================================
-// 1. INFORMAÇÕES DE REDE (Para compartilhamento)
+// 1. AUTENTICAÇÃO E CONTROLE DE ACESSO
+// ==========================================
+
+// Login com E-mail ou Seleção de Usuário + Senha/PIN
+router.post('/auth/login', (req, res) => {
+  try {
+    const { email, userId, password } = req.body;
+    if (!password) {
+      return res.status(400).json({ error: 'Senha é obrigatória' });
+    }
+
+    let user = null;
+    if (userId) {
+      user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
+    } else if (email) {
+      user = db.prepare('SELECT * FROM users WHERE LOWER(email) = LOWER(?)').get(email.trim());
+    }
+
+    if (!user) {
+      return res.status(401).json({ error: 'Usuário não encontrado' });
+    }
+
+    // Se o usuário não tem senha cadastrada, aceita '1234' e salva o hash
+    let isValid = false;
+    if (!user.password_hash) {
+      if (password === '1234') {
+        const { hash, salt } = hashPassword(password);
+        db.prepare('UPDATE users SET password_hash = ?, password_salt = ? WHERE id = ?').run(hash, salt, user.id);
+        isValid = true;
+      }
+    } else {
+      isValid = verifyPassword(password, user.password_hash, user.password_salt);
+    }
+
+    if (!isValid) {
+      return res.status(401).json({ error: 'Senha incorreta. Tente novamente ou use a senha padrão (1234).' });
+    }
+
+    const token = generateToken(user);
+    const safeUser = {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      is_admin: user.is_admin,
+      avatar_color: user.avatar_color,
+    };
+
+    res.json({
+      token,
+      user: safeUser,
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Cadastro de Novo Membro com Senha
+router.post('/auth/register', (req, res) => {
+  try {
+    const { name, email, role, password, avatar_color } = req.body;
+    if (!name) return res.status(400).json({ error: 'Nome é obrigatório' });
+    if (!password || password.length < 3) {
+      return res.status(400).json({ error: 'A senha deve ter pelo menos 3 dígitos' });
+    }
+
+    const cleanEmail = (email || `${name.toLowerCase().replace(/\s+/g, '.')}@empresa.local`).trim();
+    const existing = db.prepare('SELECT id FROM users WHERE LOWER(email) = LOWER(?)').get(cleanEmail);
+    if (existing) {
+      return res.status(400).json({ error: 'Já existe um usuário com este e-mail' });
+    }
+
+    const id = generateId('u');
+    const { hash, salt } = hashPassword(password);
+    const color = avatar_color || '#3b82f6';
+    const userRole = role || 'Membro da Equipe';
+    const isAdmin = userRole.toLowerCase().includes('gestor') || userRole.toLowerCase().includes('chefe') ? 1 : 0;
+
+    db.prepare(`
+      INSERT INTO users (id, name, email, role, is_admin, password_hash, password_salt, avatar_color)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, name.trim(), cleanEmail, userRole, isAdmin, hash, salt, color);
+
+    const newUser = db.prepare('SELECT id, name, email, role, is_admin, avatar_color FROM users WHERE id = ?').get(id);
+    const token = generateToken(newUser);
+
+    broadcastEvent('user:created', newUser);
+
+    res.status(201).json({
+      token,
+      user: newUser,
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Obter Usuário Atual pelo Token
+router.get('/auth/me', (req, res) => {
+  const user = getAuthUser(req);
+  if (!user) {
+    return res.status(401).json({ error: 'Sessão expirada ou inválida' });
+  }
+  res.json({ user });
+});
+
+// ==========================================
+// 2. INFORMAÇÕES DE REDE
 // ==========================================
 router.get('/network-info', (req, res) => {
   const ips = getLocalIpAddresses();
@@ -23,74 +166,19 @@ router.get('/network-info', (req, res) => {
 });
 
 // ==========================================
-// 2. MEMBROS DA EQUIPE (USERS)
+// 3. MEMBROS DA EQUIPE (USERS)
 // ==========================================
 router.get('/users', (req, res) => {
   try {
-    const users = db.prepare('SELECT * FROM users ORDER BY name ASC').all();
+    const users = db.prepare('SELECT id, name, email, role, is_admin, avatar_color, created_at FROM users ORDER BY is_admin DESC, name ASC').all();
     res.json(users);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-router.post('/users', (req, res) => {
-  try {
-    const { name, email, role, avatar_color } = req.body;
-    if (!name) return res.status(400).json({ error: 'Nome é obrigatório' });
-
-    const id = generateId('u');
-    const color = avatar_color || '#3b82f6';
-    const userRole = role || 'Membro';
-
-    db.prepare(`
-      INSERT INTO users (id, name, email, role, avatar_color)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(id, name, email || '', userRole, color);
-
-    const newUser = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
-    broadcastEvent('user:created', newUser);
-    res.status(201).json(newUser);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-router.put('/users/:id', (req, res) => {
-  try {
-    const { id } = req.params;
-    const { name, email, role, avatar_color } = req.body;
-
-    db.prepare(`
-      UPDATE users
-      SET name = COALESCE(?, name),
-          email = COALESCE(?, email),
-          role = COALESCE(?, role),
-          avatar_color = COALESCE(?, avatar_color)
-      WHERE id = ?
-    `).run(name, email, role, avatar_color, id);
-
-    const updatedUser = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
-    broadcastEvent('user:updated', updatedUser);
-    res.json(updatedUser);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-router.delete('/users/:id', (req, res) => {
-  try {
-    const { id } = req.params;
-    db.prepare('DELETE FROM users WHERE id = ?').run(id);
-    broadcastEvent('user:deleted', { id });
-    res.json({ success: true, id });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
 // ==========================================
-// 3. QUADROS / PLANOS (BOARDS)
+// 4. QUADROS / PLANOS (BOARDS)
 // ==========================================
 router.get('/boards', (req, res) => {
   try {
@@ -103,6 +191,7 @@ router.get('/boards', (req, res) => {
 
 router.post('/boards', (req, res) => {
   try {
+    const user = getAuthUser(req);
     const { title, description, color, icon } = req.body;
     if (!title) return res.status(400).json({ error: 'Título do plano é obrigatório' });
 
@@ -112,7 +201,6 @@ router.post('/boards', (req, res) => {
       VALUES (?, ?, ?, ?, ?)
     `).run(id, title, description || '', color || '#3b82f6', icon || 'layout-grid');
 
-    // Criar colunas padrão para o novo quadro
     const defaultCols = [
       ['col-' + generateId(), id, '📋 A Fazer', 0, '#f59e0b'],
       ['col-' + generateId(), id, '⚡ Em Andamento', 1, '#3b82f6'],
@@ -132,42 +220,8 @@ router.post('/boards', (req, res) => {
   }
 });
 
-router.put('/boards/:id', (req, res) => {
-  try {
-    const { id } = req.params;
-    const { title, description, color, icon } = req.body;
-
-    db.prepare(`
-      UPDATE boards
-      SET title = COALESCE(?, title),
-          description = COALESCE(?, description),
-          color = COALESCE(?, color),
-          icon = COALESCE(?, icon),
-          updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).run(title, description, color, icon, id);
-
-    const updated = db.prepare('SELECT * FROM boards WHERE id = ?').get(id);
-    broadcastEvent('board:updated', updated);
-    res.json(updated);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-router.delete('/boards/:id', (req, res) => {
-  try {
-    const { id } = req.params;
-    db.prepare('DELETE FROM boards WHERE id = ?').run(id);
-    broadcastEvent('board:deleted', { id });
-    res.json({ success: true, id });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
 // ==========================================
-// 4. ESTRUTURA COMPLETA DO QUADRO (DADOS ATIVOS)
+// 5. ESTRUTURA COMPLETA DO QUADRO
 // ==========================================
 router.get('/boards/:id/full', (req, res) => {
   try {
@@ -178,8 +232,7 @@ router.get('/boards/:id/full', (req, res) => {
     const columns = db.prepare('SELECT * FROM columns WHERE board_id = ? ORDER BY position ASC').all(id);
     const rawTasks = db.prepare('SELECT * FROM tasks WHERE board_id = ? ORDER BY position ASC').all(id);
 
-    // Carregar subtarefas e comentários para cada tarefa
-    const taskIds = rawTasks.map(t => t.id);
+    const taskIds = rawTasks.map((t) => t.id);
     let subtasks = [];
     let comments = [];
 
@@ -201,7 +254,7 @@ router.get('/boards/:id/full', (req, res) => {
       commentsByTask[c.task_id].push(c);
     }
 
-    const tasks = rawTasks.map(t => ({
+    const tasks = rawTasks.map((t) => ({
       ...t,
       tags: JSON.parse(t.tags || '[]'),
       assignees: JSON.parse(t.assignees || '[]'),
@@ -220,7 +273,7 @@ router.get('/boards/:id/full', (req, res) => {
 });
 
 // ==========================================
-// 5. COLUNAS / BUCKETS
+// 6. COLUNAS / BUCKETS
 // ==========================================
 router.post('/columns', (req, res) => {
   try {
@@ -279,10 +332,11 @@ router.delete('/columns/:id', (req, res) => {
 });
 
 // ==========================================
-// 6. TAREFAS (TASKS)
+// 7. TAREFAS COM CONTROLE DE PERMISSÃO
 // ==========================================
 router.post('/tasks', (req, res) => {
   try {
+    const authUser = getAuthUser(req);
     const {
       board_id,
       column_id,
@@ -301,15 +355,18 @@ router.post('/tasks', (req, res) => {
       return res.status(400).json({ error: 'Quadro, Coluna e Título são obrigatórios' });
     }
 
+    const creatorName = authUser?.name || created_by || 'Membro da Equipe';
+    const creatorId = authUser?.id || null;
+
     const maxPos = db.prepare('SELECT COALESCE(MAX(position), -1) as maxPos FROM tasks WHERE column_id = ?').get(column_id).maxPos;
     const id = generateId('task');
 
     db.prepare(`
       INSERT INTO tasks (
         id, board_id, column_id, title, description, priority,
-        start_date, due_date, position, tags, assignees, created_by, color
+        start_date, due_date, position, tags, assignees, created_by, created_by_user_id, color
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       board_id,
@@ -322,7 +379,8 @@ router.post('/tasks', (req, res) => {
       maxPos + 1,
       JSON.stringify(tags || []),
       JSON.stringify(assignees || []),
-      created_by || 'Membro da Equipe',
+      creatorName,
+      creatorId,
       color || null
     );
 
@@ -345,6 +403,18 @@ router.post('/tasks', (req, res) => {
 router.put('/tasks/:id', (req, res) => {
   try {
     const { id } = req.params;
+    const authUser = getAuthUser(req);
+    const current = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id);
+    if (!current) return res.status(404).json({ error: 'Tarefa não encontrada' });
+
+    // VERIFICAÇÃO DE PERMISSÃO:
+    // Apenas Administrador/Gestor, Criador da tarefa ou Responsável atribuído podem editar
+    if (authUser && !canUserModifyTask(authUser, current)) {
+      return res.status(403).json({
+        error: `Você não tem permissão para alterar esta tarefa. Ela pertence a ${current.created_by || 'outro membro da equipe'}.`,
+      });
+    }
+
     const {
       title,
       description,
@@ -357,9 +427,6 @@ router.put('/tasks/:id', (req, res) => {
       assignees,
       color,
     } = req.body;
-
-    const current = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id);
-    if (!current) return res.status(404).json({ error: 'Tarefa não encontrada' });
 
     db.prepare(`
       UPDATE tasks
@@ -408,18 +475,28 @@ router.put('/tasks/:id', (req, res) => {
   }
 });
 
-// Reordenamento rápido via Drag and Drop
+// Reordenação / Movimentação no Quadro com checagem de permissão
 router.post('/tasks/reorder', (req, res) => {
   try {
+    const authUser = getAuthUser(req);
     const { taskId, sourceColId, destColId, sourceIndex, destIndex, allDestTaskIds } = req.body;
 
     if (!taskId || !destColId) {
       return res.status(400).json({ error: 'Parâmetros de reordenação incompletos' });
     }
 
+    const currentTask = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId);
+    if (!currentTask) return res.status(404).json({ error: 'Tarefa não encontrada' });
+
+    // Se estiver mudando de coluna (mudança de status), checa se o usuário tem permissão
+    if (sourceColId !== destColId && authUser && !canUserModifyTask(authUser, currentTask)) {
+      return res.status(403).json({
+        error: `Você não pode mover esta tarefa. Ela pertence a ${currentTask.created_by || 'outro membro'}.`,
+      });
+    }
+
     const updateStmt = db.prepare('UPDATE tasks SET column_id = ?, position = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?');
     
-    // Transação para consistência
     const reorderTx = db.transaction(() => {
       if (allDestTaskIds && Array.isArray(allDestTaskIds)) {
         allDestTaskIds.forEach((tId, idx) => {
@@ -432,7 +509,6 @@ router.post('/tasks/reorder', (req, res) => {
 
     reorderTx();
 
-    const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId);
     broadcastEvent('task:moved', {
       taskId,
       sourceColId,
@@ -440,7 +516,7 @@ router.post('/tasks/reorder', (req, res) => {
       sourceIndex,
       destIndex,
       allDestTaskIds,
-      board_id: task?.board_id,
+      board_id: currentTask.board_id,
     });
 
     res.json({ success: true });
@@ -449,11 +525,24 @@ router.post('/tasks/reorder', (req, res) => {
   }
 });
 
+// Exclusão de Tarefa (Apenas Gestor ou Criador)
 router.delete('/tasks/:id', (req, res) => {
   try {
     const { id } = req.params;
+    const authUser = getAuthUser(req);
     const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id);
     if (!task) return res.status(404).json({ error: 'Tarefa não encontrada' });
+
+    if (authUser) {
+      const isCreator = (task.created_by_user_id && task.created_by_user_id === authUser.id) || task.created_by === authUser.name;
+      const isAdmin = authUser.is_admin === 1 || authUser.role?.toLowerCase().includes('gestor') || authUser.role?.toLowerCase().includes('chefe');
+      
+      if (!isCreator && !isAdmin) {
+        return res.status(403).json({
+          error: `Apenas ${task.created_by || 'o criador'} ou o Gestor podem excluir esta tarefa.`,
+        });
+      }
+    }
 
     db.prepare('DELETE FROM tasks WHERE id = ?').run(id);
     broadcastEvent('task:deleted', { id, board_id: task.board_id, column_id: task.column_id });
@@ -464,7 +553,7 @@ router.delete('/tasks/:id', (req, res) => {
 });
 
 // ==========================================
-// 7. SUBTAREFAS / CHECKLIST
+// 8. SUBTAREFAS / CHECKLIST
 // ==========================================
 router.post('/tasks/:id/subtasks', (req, res) => {
   try {
@@ -532,23 +621,30 @@ router.delete('/subtasks/:id', (req, res) => {
 });
 
 // ==========================================
-// 8. COMENTÁRIOS EM TEMPO REAL
+// 9. COMENTÁRIOS AUTENTICADOS EM TEMPO REAL
 // ==========================================
 router.post('/tasks/:id/comments', (req, res) => {
   try {
     const { id: task_id } = req.params;
-    const { author_name, author_avatar, content } = req.body;
+    const authUser = getAuthUser(req);
+    const { content, author_name, author_avatar } = req.body;
+
     if (!content) return res.status(400).json({ error: 'Mensagem do comentário é obrigatória' });
 
     const commentId = generateId('comm');
+    const finalAuthor = authUser?.name || author_name || 'Colega';
+    const finalAvatar = authUser?.avatar_color || author_avatar || '#3b82f6';
+    const finalAuthorId = authUser?.id || null;
+
     db.prepare(`
-      INSERT INTO comments (id, task_id, author_name, author_avatar, content)
-      VALUES (?, ?, ?, ?, ?)
+      INSERT INTO comments (id, task_id, author_name, author_id, author_avatar, content)
+      VALUES (?, ?, ?, ?, ?, ?)
     `).run(
       commentId,
       task_id,
-      author_name || 'Colega',
-      author_avatar || '#3b82f6',
+      finalAuthor,
+      finalAuthorId,
+      finalAvatar,
       content
     );
 
@@ -563,24 +659,24 @@ router.post('/tasks/:id/comments', (req, res) => {
 });
 
 // ==========================================
-// 9. EXPORTAÇÃO E BACKUP (CSV / JSON)
+// 10. EXPORTAÇÃO EXCEL / CSV
 // ==========================================
 router.get('/export/:boardId', (req, res) => {
   try {
     const { boardId } = req.params;
-    const { format } = req.query; // 'csv' ou 'json'
+    const { format } = req.query;
 
     const board = db.prepare('SELECT * FROM boards WHERE id = ?').get(boardId);
     const columns = db.prepare('SELECT * FROM columns WHERE board_id = ? ORDER BY position ASC').all(boardId);
     const tasks = db.prepare('SELECT * FROM tasks WHERE board_id = ? ORDER BY position ASC').all(boardId);
-    const users = db.prepare('SELECT * FROM users').all();
-    const userMap = Object.fromEntries(users.map(u => [u.id, u.name]));
-    const colMap = Object.fromEntries(columns.map(c => [c.id, c.title]));
+    const users = db.prepare('SELECT id, name FROM users').all();
+    const userMap = Object.fromEntries(users.map((u) => [u.id, u.name]));
+    const colMap = Object.fromEntries(columns.map((c) => [c.id, c.title]));
 
     if (format === 'csv') {
       let csv = 'ID,Titulo,Descricao,Coluna,Prioridade,Data_Inicio,Data_Entrega,Responsaveis,Criado_Por\n';
       for (const t of tasks) {
-        const assignees = JSON.parse(t.assignees || '[]').map(uid => userMap[uid] || uid).join('; ');
+        const assignees = JSON.parse(t.assignees || '[]').map((uid) => userMap[uid] || uid).join('; ');
         const row = [
           `"${t.id}"`,
           `"${(t.title || '').replace(/"/g, '""')}"`,
@@ -597,14 +693,13 @@ router.get('/export/:boardId', (req, res) => {
 
       res.setHeader('Content-Type', 'text/csv; charset=utf-8');
       res.setHeader('Content-Disposition', `attachment; filename=planner_tarefas_${Date.now()}.csv`);
-      return res.send('\uFEFF' + csv); // BOM para acentuação correta no Excel
+      return res.send('\uFEFF' + csv);
     }
 
-    // Exportação completa JSON
     res.json({
       board,
       columns,
-      tasks: tasks.map(t => ({
+      tasks: tasks.map((t) => ({
         ...t,
         tags: JSON.parse(t.tags || '[]'),
         assignees: JSON.parse(t.assignees || '[]'),

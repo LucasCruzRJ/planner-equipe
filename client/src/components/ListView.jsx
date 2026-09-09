@@ -6,7 +6,7 @@ import {
   AlertTriangle,
   Clock,
   Plus,
-  Tag,
+  Lock,
 } from 'lucide-react';
 import { formatDueDate, getPriorityMeta, getUserInitials } from '../utils/helpers';
 
@@ -14,6 +14,7 @@ export function ListView({
   tasks,
   columns,
   users,
+  currentUser,
   onOpenTask,
   onNewTask,
   onUpdateTask,
@@ -22,6 +23,7 @@ export function ListView({
   const [sortAsc, setSortAsc] = useState(true);
 
   const columnMap = Object.fromEntries(columns.map((c) => [c.id, c]));
+  const isAdmin = currentUser?.is_admin === 1 || currentUser?.role?.toLowerCase().includes('gestor') || currentUser?.role?.toLowerCase().includes('chefe');
 
   const handleSort = (field) => {
     if (sortField === field) {
@@ -119,6 +121,7 @@ export function ListView({
                     <ArrowUpDown className="w-3 h-3" />
                   </div>
                 </th>
+                <th className="py-3 px-4">Criado por</th>
                 <th className="py-3 px-4">Checklist</th>
               </tr>
             </thead>
@@ -127,6 +130,10 @@ export function ListView({
                 const priorityMeta = getPriorityMeta(task.priority);
                 const dueInfo = formatDueDate(task.due_date);
                 const col = columnMap[task.column_id];
+
+                const isCreator = (task.created_by_user_id && task.created_by_user_id === currentUser?.id) || (!task.created_by_user_id && task.created_by === currentUser?.name);
+                const isAssignee = (task.assignees || []).includes(currentUser?.id);
+                const canModify = isAdmin || isCreator || isAssignee;
 
                 const subtasks = task.subtasks || [];
                 const completedSubtasks = subtasks.filter((s) => s.completed).length;
@@ -144,7 +151,10 @@ export function ListView({
                   >
                     {/* Título e Tags */}
                     <td className="py-3.5 px-4 font-semibold text-slate-800 max-w-xs sm:max-w-sm">
-                      <div className="truncate">{task.title}</div>
+                      <div className="flex items-center gap-1.5">
+                        {!canModify && <Lock className="w-3.5 h-3.5 text-amber-500 shrink-0" title="Apenas leitura" />}
+                        <span className="truncate">{task.title}</span>
+                      </div>
                       {(task.tags || []).length > 0 && (
                         <div className="flex gap-1 mt-1 overflow-hidden">
                           {task.tags.map((t, idx) => (
@@ -159,19 +169,25 @@ export function ListView({
                       )}
                     </td>
 
-                    {/* Coluna / Status (Dropdown inline) */}
+                    {/* Coluna / Status (Dropdown inline se permitido) */}
                     <td className="py-3.5 px-4" onClick={(e) => e.stopPropagation()}>
-                      <select
-                        value={task.column_id}
-                        onChange={(e) => onUpdateTask(task.id, { column_id: e.target.value })}
-                        className="text-xs font-medium py-1 px-2.5 rounded-lg border border-slate-200 bg-white hover:border-slate-300 transition"
-                      >
-                        {columns.map((c) => (
-                          <option key={c.id} value={c.id}>
-                            {c.title}
-                          </option>
-                        ))}
-                      </select>
+                      {canModify ? (
+                        <select
+                          value={task.column_id}
+                          onChange={(e) => onUpdateTask(task.id, { column_id: e.target.value })}
+                          className="text-xs font-medium py-1 px-2.5 rounded-lg border border-slate-200 bg-white hover:border-slate-300 transition"
+                        >
+                          {columns.map((c) => (
+                            <option key={c.id} value={c.id}>
+                              {c.title}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <span className="text-xs font-medium px-2.5 py-1 bg-slate-100 text-slate-700 rounded-lg">
+                          {col?.title || 'Status'}
+                        </span>
+                      )}
                     </td>
 
                     {/* Prioridade */}
@@ -224,6 +240,13 @@ export function ListView({
                       )}
                     </td>
 
+                    {/* Criado por */}
+                    <td className="py-3.5 px-4 text-xs font-medium text-slate-700">
+                      <span className="truncate max-w-[110px] inline-block">
+                        {task.created_by || 'Equipe'}
+                      </span>
+                    </td>
+
                     {/* Checklist */}
                     <td className="py-3.5 px-4 text-xs font-medium text-slate-600">
                       {totalSubtasks > 0 ? (
@@ -243,7 +266,7 @@ export function ListView({
 
               {sortedTasks.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="text-center py-12 text-slate-400">
+                  <td colSpan={7} className="text-center py-12 text-slate-400">
                     Nenhuma tarefa encontrada com os filtros atuais.
                   </td>
                 </tr>

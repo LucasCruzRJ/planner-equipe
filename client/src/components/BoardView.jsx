@@ -1,24 +1,28 @@
 import React, { useState } from 'react';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
-import { Plus, MoreHorizontal, Trash2, Edit2, CheckCircle, Clock } from 'lucide-react';
+import { Plus, MoreHorizontal, Trash2, Edit2, CheckCircle, Clock, ShieldAlert } from 'lucide-react';
 import { TaskCard } from './TaskCard';
 
 export function BoardView({
   columns,
   tasks,
   users,
+  currentUser,
   onOpenTask,
   onNewTaskInColumn,
   onReorderTasks,
   onCreateColumn,
   onUpdateColumn,
   onDeleteColumn,
+  onPermissionError,
 }) {
   const [newColumnTitle, setNewColumnTitle] = useState('');
   const [isAddingColumn, setIsAddingColumn] = useState(false);
   const [editingColumnId, setEditingColumnId] = useState(null);
   const [editingColumnTitle, setEditingColumnTitle] = useState('');
   const [openColMenuId, setOpenColMenuId] = useState(null);
+
+  const isAdmin = currentUser?.is_admin === 1 || currentUser?.role?.toLowerCase().includes('gestor') || currentUser?.role?.toLowerCase().includes('chefe');
 
   const handleDragEnd = (result) => {
     const { destination, source, draggableId } = result;
@@ -31,16 +35,25 @@ export function BoardView({
       return;
     }
 
-    const sourceColId = source.droppableId;
-    const destColId = destination.droppableId;
-
-    // Calcular novo array de IDs da coluna de destino
-    const destColTasks = tasks.filter((t) => t.column_id === destColId);
-    const sourceColTasks = tasks.filter((t) => t.column_id === sourceColId);
-
     const taskToMove = tasks.find((t) => t.id === draggableId);
     if (!taskToMove) return;
 
+    // Checagem de Permissão no Arraste
+    const isCreator = (taskToMove.created_by_user_id && taskToMove.created_by_user_id === currentUser?.id) || (!taskToMove.created_by_user_id && taskToMove.created_by === currentUser?.name);
+    const isAssignee = (taskToMove.assignees || []).includes(currentUser?.id);
+    const canModify = isAdmin || isCreator || isAssignee;
+
+    if (!canModify) {
+      if (onPermissionError) {
+        onPermissionError(`Você não tem permissão para mover tarefas criadas por ${taskToMove.created_by || 'outros colegas'}.`);
+      }
+      return;
+    }
+
+    const sourceColId = source.droppableId;
+    const destColId = destination.droppableId;
+
+    const destColTasks = tasks.filter((t) => t.column_id === destColId);
     let allDestTaskIds = [];
 
     if (sourceColId === destColId) {
@@ -114,11 +127,15 @@ export function BoardView({
                     ) : (
                       <h3
                         onClick={() => {
-                          setEditingColumnId(column.id);
-                          setEditingColumnTitle(column.title);
+                          if (isAdmin) {
+                            setEditingColumnId(column.id);
+                            setEditingColumnTitle(column.title);
+                          }
                         }}
-                        className="text-sm font-bold text-slate-800 truncate cursor-pointer hover:text-blue-600 transition"
-                        title="Clique para renomear"
+                        className={`text-sm font-bold text-slate-800 truncate transition ${
+                          isAdmin ? 'cursor-pointer hover:text-blue-600' : 'cursor-default'
+                        }`}
+                        title={isAdmin ? "Clique para renomear" : column.title}
                       >
                         {column.title}
                       </h3>
@@ -128,52 +145,54 @@ export function BoardView({
                     </span>
                   </div>
 
-                  {/* Menu da Coluna */}
-                  <div className="relative">
-                    <button
-                      onClick={() =>
-                        setOpenColMenuId(openColMenuId === column.id ? null : column.id)
-                      }
-                      className="p-1 rounded-md text-slate-400 hover:text-slate-700 hover:bg-slate-200/70 transition"
-                    >
-                      <MoreHorizontal className="w-4 h-4" />
-                    </button>
+                  {/* Menu da Coluna (Apenas Gestor) */}
+                  {isAdmin && (
+                    <div className="relative">
+                      <button
+                        onClick={() =>
+                          setOpenColMenuId(openColMenuId === column.id ? null : column.id)
+                        }
+                        className="p-1 rounded-md text-slate-400 hover:text-slate-700 hover:bg-slate-200/70 transition"
+                      >
+                        <MoreHorizontal className="w-4 h-4" />
+                      </button>
 
-                    {openColMenuId === column.id && (
-                      <>
-                        <div
-                          className="fixed inset-0 z-40"
-                          onClick={() => setOpenColMenuId(null)}
-                        />
-                        <div className="absolute right-0 mt-1 w-44 bg-white rounded-xl shadow-xl border border-slate-100 py-1 z-50 animate-fade-in text-xs">
-                          <button
-                            onClick={() => {
-                              setEditingColumnId(column.id);
-                              setEditingColumnTitle(column.title);
-                              setOpenColMenuId(null);
-                            }}
-                            className="w-full text-left px-3 py-2 flex items-center gap-2 hover:bg-slate-50 text-slate-700 font-medium"
-                          >
-                            <Edit2 className="w-3.5 h-3.5" />
-                            Renomear Coluna
-                          </button>
-                          <div className="border-t border-slate-100 my-1" />
-                          <button
-                            onClick={() => {
-                              if (confirm(`Deseja excluir a coluna "${column.title}" e suas tarefas?`)) {
-                                onDeleteColumn(column.id);
-                              }
-                              setOpenColMenuId(null);
-                            }}
-                            className="w-full text-left px-3 py-2 flex items-center gap-2 hover:bg-red-50 text-red-600 font-medium"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                            Excluir Coluna
-                          </button>
-                        </div>
-                      </>
-                    )}
-                  </div>
+                      {openColMenuId === column.id && (
+                        <>
+                          <div
+                            className="fixed inset-0 z-40"
+                            onClick={() => setOpenColMenuId(null)}
+                          />
+                          <div className="absolute right-0 mt-1 w-44 bg-white rounded-xl shadow-xl border border-slate-100 py-1 z-50 animate-fade-in text-xs">
+                            <button
+                              onClick={() => {
+                                setEditingColumnId(column.id);
+                                setEditingColumnTitle(column.title);
+                                setOpenColMenuId(null);
+                              }}
+                              className="w-full text-left px-3 py-2 flex items-center gap-2 hover:bg-slate-50 text-slate-700 font-medium"
+                            >
+                              <Edit2 className="w-3.5 h-3.5" />
+                              Renomear Coluna
+                            </button>
+                            <div className="border-t border-slate-100 my-1" />
+                            <button
+                              onClick={() => {
+                                if (confirm(`Deseja excluir a coluna "${column.title}" e suas tarefas?`)) {
+                                  onDeleteColumn(column.id);
+                                }
+                                setOpenColMenuId(null);
+                              }}
+                              className="w-full text-left px-3 py-2 flex items-center gap-2 hover:bg-red-50 text-red-600 font-medium"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              Excluir Coluna
+                            </button>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 {/* Botão Rápido de Adicionar Tarefa na Coluna */}
@@ -182,7 +201,7 @@ export function BoardView({
                   className="w-full mb-3 flex items-center justify-center gap-1.5 py-2 px-3 bg-white/70 hover:bg-white text-slate-700 hover:text-blue-600 text-xs font-semibold rounded-xl border border-dashed border-slate-300 hover:border-blue-400 shadow-2xs hover:shadow-xs transition"
                 >
                   <Plus className="w-3.5 h-3.5" />
-                  Adicionar Tarefa
+                  Adicionar Minha Tarefa
                 </button>
 
                 {/* Área de Soltar Cards (Droppable) */}
@@ -202,6 +221,7 @@ export function BoardView({
                             <TaskCard
                               task={task}
                               users={users}
+                              currentUser={currentUser}
                               onOpenTask={onOpenTask}
                               provided={provided}
                               isDragging={snapshot.isDragging}
@@ -238,7 +258,7 @@ export function BoardView({
                   autoFocus
                   value={newColumnTitle}
                   onChange={(e) => setNewColumnTitle(e.target.value)}
-                  placeholder="Ex: Em Testes, Aguardando Cliente..."
+                  placeholder="Ex: Em Testes, Aguardando Aprovação..."
                   className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:border-blue-500 focus:outline-hidden mb-3"
                 />
                 <div className="flex items-center gap-2">

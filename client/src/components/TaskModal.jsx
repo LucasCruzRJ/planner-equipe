@@ -14,6 +14,8 @@ import {
   AlertTriangle,
   AlignLeft,
   CheckCircle2,
+  Lock,
+  ShieldAlert,
 } from 'lucide-react';
 import { getPriorityMeta, getUserInitials } from '../utils/helpers';
 
@@ -44,6 +46,16 @@ export function TaskModal({
   const [newCommentText, setNewCommentText] = useState('');
   const [isSaving, setIsSaving] = useState(false);
 
+  // Verificação de Permissões
+  const isAdmin = currentUser?.is_admin === 1 || currentUser?.role?.toLowerCase().includes('gestor') || currentUser?.role?.toLowerCase().includes('chefe');
+  const isCreator = (task.created_by_user_id && task.created_by_user_id === currentUser?.id) || (!task.created_by_user_id && task.created_by === currentUser?.name);
+  const isAssignee = (task.assignees || []).includes(currentUser?.id);
+
+  // canModify: Pode editar título, descrição, datas, prioridade e tags
+  const canModify = isAdmin || isCreator || isAssignee;
+  // canDelete: Apenas criador ou gestor
+  const canDelete = isAdmin || isCreator;
+
   useEffect(() => {
     setTitle(task.title || '');
     setDescription(task.description || '');
@@ -56,12 +68,14 @@ export function TaskModal({
   }, [task]);
 
   const handleSaveField = async (fields) => {
+    if (!canModify) return;
     setIsSaving(true);
     await onUpdateTask(task.id, fields);
     setIsSaving(false);
   };
 
   const handleToggleAssignee = (userId) => {
+    if (!canModify) return;
     let updated;
     if (assignees.includes(userId)) {
       updated = assignees.filter((id) => id !== userId);
@@ -73,6 +87,7 @@ export function TaskModal({
   };
 
   const handleAddTag = (e) => {
+    if (!canModify) return;
     if (e.key === 'Enter' || e.key === ',') {
       e.preventDefault();
       const val = newTagInput.trim().replace(/^#/, '');
@@ -86,12 +101,14 @@ export function TaskModal({
   };
 
   const handleRemoveTag = (tagToRemove) => {
+    if (!canModify) return;
     const updated = tags.filter((t) => t !== tagToRemove);
     setTags(updated);
     handleSaveField({ tags: updated });
   };
 
   const handleColumnChange = (newColId) => {
+    if (!canModify) return;
     setColumnId(newColId);
     handleSaveField({ column_id: newColId });
 
@@ -107,7 +124,7 @@ export function TaskModal({
 
   const handleCreateSubtask = (e) => {
     e.preventDefault();
-    if (!newSubtaskTitle.trim()) return;
+    if (!canModify || !newSubtaskTitle.trim()) return;
     onAddSubtask(task.id, newSubtaskTitle.trim());
     setNewSubtaskTitle('');
   };
@@ -130,22 +147,35 @@ export function TaskModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 overflow-y-auto bg-slate-900/60 backdrop-blur-xs animate-fade-in">
-      <div
-        className="fixed inset-0"
-        onClick={onClose}
-      />
+      <div className="fixed inset-0" onClick={onClose} />
 
       <div className="relative w-full max-w-3xl bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden z-10 flex flex-col max-h-[90vh]">
         
+        {/* Banner de Aviso quando em Modo Leitura */}
+        {!canModify && (
+          <div className="bg-amber-500 text-white px-6 py-2 text-xs font-semibold flex items-center justify-between gap-2 shadow-inner">
+            <div className="flex items-center gap-2">
+              <Lock className="w-4 h-4 shrink-0" />
+              <span>
+                <strong>Modo Apenas Leitura:</strong> Esta tarefa foi criada por <strong>{task.created_by || 'outro colega'}</strong>. Apenas o criador ou o Gestor podem fazer alterações.
+              </span>
+            </div>
+            <span className="text-[10px] bg-amber-600/60 px-2 py-0.5 rounded-md font-mono">Bloqueada</span>
+          </div>
+        )}
+
         {/* Barra Superior do Modal */}
         <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between gap-4 bg-slate-50/60">
           
           <div className="flex items-center gap-3">
             {/* Seletor de Coluna / Bucket */}
             <select
+              disabled={!canModify}
               value={columnId}
               onChange={(e) => handleColumnChange(e.target.value)}
-              className="text-xs font-bold py-1.5 px-3 rounded-lg border border-slate-200 bg-white hover:border-slate-300 transition text-slate-800"
+              className={`text-xs font-bold py-1.5 px-3 rounded-lg border border-slate-200 bg-white transition text-slate-800 ${
+                !canModify ? 'opacity-70 cursor-not-allowed bg-slate-100' : 'hover:border-slate-300'
+              }`}
             >
               {columns.map((c) => (
                 <option key={c.id} value={c.id}>
@@ -156,12 +186,15 @@ export function TaskModal({
 
             {/* Seletor de Prioridade */}
             <select
+              disabled={!canModify}
               value={priority}
               onChange={(e) => {
                 setPriority(e.target.value);
                 handleSaveField({ priority: e.target.value });
               }}
-              className="text-xs font-bold py-1.5 px-3 rounded-lg border border-slate-200 bg-white hover:border-slate-300 transition text-slate-800"
+              className={`text-xs font-bold py-1.5 px-3 rounded-lg border border-slate-200 bg-white transition text-slate-800 ${
+                !canModify ? 'opacity-70 cursor-not-allowed bg-slate-100' : 'hover:border-slate-300'
+              }`}
             >
               <option value="urgente">🔴 Urgente</option>
               <option value="alta">🟠 Alta</option>
@@ -171,18 +204,20 @@ export function TaskModal({
           </div>
 
           <div className="flex items-center gap-2">
-            <button
-              onClick={() => {
-                if (confirm('Tem certeza que deseja excluir esta tarefa permanentemente?')) {
-                  onDeleteTask(task.id);
-                  onClose();
-                }
-              }}
-              className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition"
-              title="Excluir tarefa"
-            >
-              <Trash2 className="w-4 h-4" />
-            </button>
+            {canDelete && (
+              <button
+                onClick={() => {
+                  if (confirm('Tem certeza que deseja excluir esta tarefa permanentemente?')) {
+                    onDeleteTask(task.id);
+                    onClose();
+                  }
+                }}
+                className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition"
+                title="Excluir tarefa"
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
+            )}
             <button
               onClick={onClose}
               className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl transition"
@@ -200,11 +235,16 @@ export function TaskModal({
           <div>
             <input
               type="text"
+              disabled={!canModify}
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               onBlur={() => handleSaveField({ title })}
               placeholder="Título da tarefa..."
-              className="w-full text-xl sm:text-2xl font-bold text-slate-900 border-b border-transparent hover:border-slate-200 focus:border-blue-500 focus:outline-hidden py-1 transition"
+              className={`w-full text-xl sm:text-2xl font-bold text-slate-900 border-b border-transparent py-1 transition ${
+                canModify
+                  ? 'hover:border-slate-200 focus:border-blue-500 focus:outline-hidden'
+                  : 'bg-transparent cursor-default'
+              }`}
             />
           </div>
 
@@ -224,12 +264,13 @@ export function TaskModal({
                     <button
                       key={u.id}
                       type="button"
+                      disabled={!canModify}
                       onClick={() => handleToggleAssignee(u.id)}
                       className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold border transition ${
                         isAssigned
                           ? 'bg-blue-600 text-white border-blue-600 shadow-2xs'
                           : 'bg-white text-slate-700 border-slate-200 hover:border-slate-300'
-                      }`}
+                      } ${!canModify ? 'cursor-default opacity-80' : ''}`}
                     >
                       <div
                         className="w-4 h-4 rounded-full text-white font-bold flex items-center justify-center text-[9px]"
@@ -253,12 +294,15 @@ export function TaskModal({
                 </label>
                 <input
                   type="date"
+                  disabled={!canModify}
                   value={dueDate}
                   onChange={(e) => {
                     setDueDate(e.target.value);
                     handleSaveField({ due_date: e.target.value });
                   }}
-                  className="w-full text-xs font-medium py-1.5 px-3 bg-white border border-slate-200 rounded-lg text-slate-800 focus:outline-hidden focus:border-blue-500"
+                  className={`w-full text-xs font-medium py-1.5 px-3 bg-white border border-slate-200 rounded-lg text-slate-800 focus:outline-hidden ${
+                    canModify ? 'focus:border-blue-500' : 'cursor-not-allowed bg-slate-100/70'
+                  }`}
                 />
               </div>
             </div>
@@ -272,11 +316,14 @@ export function TaskModal({
             </label>
             <textarea
               rows={4}
+              disabled={!canModify}
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               onBlur={() => handleSaveField({ description })}
-              placeholder="Adicione informações detalhadas, requisitos, links ou anotações para a equipe..."
-              className="w-full text-sm text-slate-800 p-3 bg-white border border-slate-200 rounded-xl focus:border-blue-500 focus:outline-hidden transition leading-relaxed resize-y"
+              placeholder={canModify ? "Adicione informações detalhadas, requisitos ou anotações..." : "Sem descrição detalhada."}
+              className={`w-full text-sm text-slate-800 p-3 bg-white border border-slate-200 rounded-xl leading-relaxed resize-y ${
+                canModify ? 'focus:border-blue-500 focus:outline-hidden transition' : 'bg-slate-50/50 cursor-default'
+              }`}
             />
           </div>
 
@@ -293,23 +340,27 @@ export function TaskModal({
                   className="inline-flex items-center gap-1 text-xs font-semibold bg-blue-50 text-blue-700 px-2.5 py-1 rounded-lg border border-blue-100"
                 >
                   #{tag}
-                  <button
-                    type="button"
-                    onClick={() => handleRemoveTag(tag)}
-                    className="text-blue-400 hover:text-blue-700"
-                  >
-                    <X className="w-3 h-3" />
-                  </button>
+                  {canModify && (
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveTag(tag)}
+                      className="text-blue-400 hover:text-blue-700"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  )}
                 </span>
               ))}
-              <input
-                type="text"
-                value={newTagInput}
-                onChange={(e) => setNewTagInput(e.target.value)}
-                onKeyDown={handleAddTag}
-                placeholder="Digitar tag e pressionar Enter..."
-                className="text-xs py-1 px-2.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-700 focus:border-blue-500 focus:bg-white focus:outline-hidden"
-              />
+              {canModify && (
+                <input
+                  type="text"
+                  value={newTagInput}
+                  onChange={(e) => setNewTagInput(e.target.value)}
+                  onKeyDown={handleAddTag}
+                  placeholder="Digitar tag e Enter..."
+                  className="text-xs py-1 px-2.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-700 focus:border-blue-500 focus:bg-white focus:outline-hidden"
+                />
+              )}
             </div>
           </div>
 
@@ -345,9 +396,10 @@ export function TaskModal({
                   <label className="flex items-center gap-2.5 flex-1 cursor-pointer select-none">
                     <input
                       type="checkbox"
+                      disabled={!canModify}
                       checked={!!st.completed}
                       onChange={(e) => onToggleSubtask(st.id, e.target.checked)}
-                      className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 border-slate-300"
+                      className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 border-slate-300 disabled:opacity-50"
                     />
                     <span
                       className={`text-xs font-medium ${
@@ -357,44 +409,46 @@ export function TaskModal({
                       {st.title}
                     </span>
                   </label>
-                  <button
-                    type="button"
-                    onClick={() => onDeleteSubtask(st.id)}
-                    className="opacity-0 group-hover:opacity-100 p-1 text-slate-400 hover:text-red-600 transition"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
+                  {canModify && (
+                    <button
+                      type="button"
+                      onClick={() => onDeleteSubtask(st.id)}
+                      className="opacity-0 group-hover:opacity-100 p-1 text-slate-400 hover:text-red-600 transition"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  )}
                 </div>
               ))}
             </div>
 
-            {/* Input para novo item no checklist */}
-            <form onSubmit={handleCreateSubtask} className="flex gap-2">
-              <input
-                type="text"
-                value={newSubtaskTitle}
-                onChange={(e) => setNewSubtaskTitle(e.target.value)}
-                placeholder="Adicionar um item ao checklist..."
-                className="flex-1 text-xs py-2 px-3 border border-slate-200 rounded-xl focus:border-blue-500 focus:outline-hidden"
-              />
-              <button
-                type="submit"
-                className="inline-flex items-center gap-1 py-2 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-xl transition"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                Adicionar
-              </button>
-            </form>
+            {canModify && (
+              <form onSubmit={handleCreateSubtask} className="flex gap-2">
+                <input
+                  type="text"
+                  value={newSubtaskTitle}
+                  onChange={(e) => setNewSubtaskTitle(e.target.value)}
+                  placeholder="Adicionar um item ao checklist..."
+                  className="flex-1 text-xs py-2 px-3 border border-slate-200 rounded-xl focus:border-blue-500 focus:outline-hidden"
+                />
+                <button
+                  type="submit"
+                  className="inline-flex items-center gap-1 py-2 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-xl transition"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  Adicionar
+                </button>
+              </form>
+            )}
           </div>
 
-          {/* Seção de Discussão / Comentários em Tempo Real */}
+          {/* Seção de Discussão / Comentários em Tempo Real (Aberto para toda a equipe colaborar) */}
           <div className="border-t border-slate-100 pt-5">
             <label className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5 mb-3">
               <MessageSquare className="w-3.5 h-3.5" />
               Discussão da Equipe ({comments.length})
             </label>
 
-            {/* Lista de Comentários */}
             <div className="space-y-3 mb-4 max-h-56 overflow-y-auto pr-1">
               {comments.map((comm) => (
                 <div key={comm.id} className="flex gap-3 bg-slate-50/70 p-3 rounded-2xl border border-slate-100">
@@ -420,7 +474,7 @@ export function TaskModal({
 
               {comments.length === 0 && (
                 <p className="text-xs text-slate-400 italic">
-                  Nenhum comentário nesta tarefa ainda. Inicie a conversa com a equipe!
+                  Nenhum comentário nesta tarefa ainda. Envie uma dúvida ou nota para a equipe!
                 </p>
               )}
             </div>
@@ -448,12 +502,14 @@ export function TaskModal({
 
         {/* Rodapé do Modal */}
         <div className="px-6 py-3 border-t border-slate-100 bg-slate-50 flex items-center justify-between text-xs text-slate-500">
-          <div>Criado por: {task.created_by || 'Equipe'}</div>
+          <div>
+            Criado por: <strong>{task.created_by || 'Equipe'}</strong>
+          </div>
           <button
             onClick={onClose}
             className="py-1.5 px-4 bg-slate-200 hover:bg-slate-300 text-slate-800 font-semibold rounded-xl transition"
           >
-            Concluir Edição
+            {canModify ? 'Concluir Edição' : 'Fechar'}
           </button>
         </div>
       </div>
