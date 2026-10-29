@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Lock, User, UserPlus, LogIn, Shield, Check, AlertCircle, KeyRound, Sparkles } from 'lucide-react';
+import { Lock, User, UserPlus, LogIn, Shield, Check, AlertCircle, KeyRound, Sparkles, Code2, Crown } from 'lucide-react';
 import { getUserInitials } from '../utils/helpers';
 
 export function LoginModal({ users, onLogin, onRegister }) {
@@ -13,7 +13,6 @@ export function LoginModal({ users, onLogin, onRegister }) {
   const [regEmail, setRegEmail] = useState('');
   const [regPassword, setRegPassword] = useState('');
   const [regRole, setRegRole] = useState('Membro da Equipe');
-  const [regIsAdmin, setRegIsAdmin] = useState(false);
   const [regColor, setRegColor] = useState('#3b82f6');
   
   const [errorMsg, setErrorMsg] = useState('');
@@ -23,6 +22,11 @@ export function LoginModal({ users, onLogin, onRegister }) {
     '#3b82f6', '#8b5cf6', '#ec4899', '#f43f5e',
     '#f59e0b', '#10b981', '#06b6d4', '#64748b'
   ];
+
+  // Detecção em tempo real do perfil pelo prefixo da senha
+  const cleanRegPwd = regPassword.trim().toLowerCase();
+  const isDetectedAdmin = cleanRegPwd.startsWith('admin');
+  const isDetectedDev = cleanRegPwd.startsWith('dev');
 
   const handleQuickLogin = async (e) => {
     e.preventDefault();
@@ -89,6 +93,14 @@ export function LoginModal({ users, onLogin, onRegister }) {
     setLoading(true);
 
     try {
+      // O perfil de Gestor ou Desenvolvedor é validado no servidor pelo prefixo da senha
+      let targetRole = regRole.trim();
+      if (isDetectedAdmin && (!targetRole || targetRole === 'Membro da Equipe')) {
+        targetRole = 'Gestor / Chefe';
+      } else if (isDetectedDev && (!targetRole || targetRole === 'Membro da Equipe')) {
+        targetRole = 'Desenvolvedor';
+      }
+
       const res = await fetch('/api/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -96,9 +108,8 @@ export function LoginModal({ users, onLogin, onRegister }) {
           name: regName.trim(),
           email: regEmail.trim(),
           password: regPassword.trim(),
-          role: regRole.trim() || (regIsAdmin ? 'Gestor / Chefe' : 'Membro da Equipe'),
+          role: targetRole || 'Membro da Equipe',
           avatar_color: regColor,
-          is_admin: regIsAdmin,
         }),
       });
 
@@ -178,7 +189,7 @@ export function LoginModal({ users, onLogin, onRegister }) {
           </button>
         </div>
 
-        {/* Modo 1: Escolher Membro da Lista + Senha (Mais Rápido) */}
+        {/* Modo 1: Escolher Membro da Lista + Senha */}
         {mode === 'select' && (
           <form onSubmit={handleQuickLogin} className="space-y-4 animate-fade-in">
             <div>
@@ -188,6 +199,9 @@ export function LoginModal({ users, onLogin, onRegister }) {
               <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1 border border-slate-200 rounded-2xl p-2 bg-slate-50/50">
                 {users.map((u) => {
                   const isSelected = selectedUser?.id === u.id;
+                  const isAdmin = u.is_admin === 1 || u.role?.toLowerCase().includes('gestor') || u.role?.toLowerCase().includes('chefe');
+                  const isDev = u.role?.toLowerCase().includes('desenvolvedor') || u.role?.toLowerCase().includes('dev');
+
                   return (
                     <button
                       key={u.id}
@@ -207,9 +221,13 @@ export function LoginModal({ users, onLogin, onRegister }) {
                           {getUserInitials(u.name)}
                         </div>
                         <div className="min-w-0 truncate">
-                          <div className="text-xs font-bold truncate">{u.name}</div>
+                          <div className="text-xs font-bold truncate flex items-center gap-1">
+                            <span>{u.name}</span>
+                            {isAdmin && <Crown className="w-3 h-3 text-amber-400 shrink-0" />}
+                            {!isAdmin && isDev && <Code2 className="w-3 h-3 text-blue-300 shrink-0" />}
+                          </div>
                           <div className={`text-[10px] truncate ${isSelected ? 'text-blue-100' : 'text-slate-500'}`}>
-                            {u.is_admin ? '👑 Gestor / Chefe' : u.role || 'Membro'}
+                            {isAdmin ? '👑 Gestor / Chefe' : (isDev ? '💻 Desenvolvedor' : u.role || 'Membro')}
                           </div>
                         </div>
                       </div>
@@ -289,7 +307,7 @@ export function LoginModal({ users, onLogin, onRegister }) {
           </form>
         )}
 
-        {/* Modo 3: Cadastro de Novo Membro */}
+        {/* Modo 3: Cadastro de Novo Membro com Definição Segura por Prefixo de Senha */}
         {mode === 'register' && (
           <form onSubmit={handleRegister} className="space-y-3 animate-fade-in">
             <div>
@@ -307,7 +325,7 @@ export function LoginModal({ users, onLogin, onRegister }) {
 
             <div className="grid grid-cols-2 gap-2">
               <div>
-                <label className="text-xs font-bold text-slate-700 block mb-1">Cargo / Setor</label>
+                <label className="text-xs font-bold text-slate-700 block mb-1">Cargo / Setor (opcional)</label>
                 <input
                   type="text"
                   value={regRole}
@@ -324,11 +342,48 @@ export function LoginModal({ users, onLogin, onRegister }) {
                   required
                   value={regPassword}
                   onChange={(e) => setRegPassword(e.target.value)}
-                  placeholder="Mínimo 3 dígitos"
+                  placeholder="Defina sua senha"
                   className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:border-blue-500 focus:outline-hidden"
                 />
               </div>
             </div>
+
+            {/* Indicador Dinâmico de Perfil de Acesso por Senha */}
+            {isDetectedAdmin ? (
+              <div className="p-3 rounded-2xl bg-amber-50 border border-amber-300 text-amber-900 text-xs flex items-start gap-2.5 animate-fade-in shadow-2xs">
+                <Crown className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                <div className="leading-snug">
+                  <div className="font-bold flex items-center gap-1 text-amber-900">
+                    👑 Código de Gestor / Chefe Reconhecido!
+                  </div>
+                  <p className="text-[11px] text-amber-700 mt-0.5">
+                    Sua senha começa com <strong>"admin"</strong>. Esta conta terá <strong>acesso Master total</strong> para gerenciar a equipe e qualquer tarefa do quadro.
+                  </p>
+                </div>
+              </div>
+            ) : isDetectedDev ? (
+              <div className="p-3 rounded-2xl bg-indigo-50 border border-indigo-300 text-indigo-900 text-xs flex items-start gap-2.5 animate-fade-in shadow-2xs">
+                <Code2 className="w-5 h-5 text-indigo-600 shrink-0 mt-0.5" />
+                <div className="leading-snug">
+                  <div className="font-bold flex items-center gap-1 text-indigo-900">
+                    💻 Código de Desenvolvedor Reconhecido!
+                  </div>
+                  <p className="text-[11px] text-indigo-700 mt-0.5">
+                    Sua senha começa com <strong>"dev"</strong>. Esta conta será identificada com a função de <strong>Desenvolvedor</strong>.
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div className="p-2.5 rounded-2xl bg-slate-50 border border-slate-200 text-slate-600 text-xs flex items-start gap-2">
+                <KeyRound className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" />
+                <div className="text-[11px] leading-snug">
+                  <span className="font-semibold text-slate-700">Chaves de Perfil: </span>
+                  <span className="text-slate-500">
+                    Inicie a senha com <strong>"admin"</strong> (ex: <code className="bg-slate-200 px-1 rounded text-slate-800">admin123</code>) para <strong>Gestor</strong>, ou com <strong>"dev"</strong> (ex: <code className="bg-slate-200 px-1 rounded text-slate-800">dev123</code>) para <strong>Desenvolvedor</strong>.
+                  </span>
+                </div>
+              </div>
+            )}
 
             <div>
               <label className="text-xs font-bold text-slate-700 block mb-1">E-mail (opcional)</label>
@@ -339,40 +394,6 @@ export function LoginModal({ users, onLogin, onRegister }) {
                 placeholder="roberto@empresa.com"
                 className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:border-blue-500 focus:outline-hidden"
               />
-            </div>
-
-            {/* Opção para Chefe / Gestor */}
-            <div 
-              onClick={() => {
-                const next = !regIsAdmin;
-                setRegIsAdmin(next);
-                if (next && regRole === 'Membro da Equipe') {
-                  setRegRole('Gestor / Chefe');
-                } else if (!next && regRole === 'Gestor / Chefe') {
-                  setRegRole('Membro da Equipe');
-                }
-              }}
-              className={`p-3 rounded-2xl border cursor-pointer transition flex items-start gap-3 select-none ${
-                regIsAdmin
-                  ? 'bg-amber-50/80 border-amber-300 ring-2 ring-amber-400/20'
-                  : 'bg-slate-50 border-slate-200 hover:bg-slate-100/70'
-              }`}
-            >
-              <input
-                type="checkbox"
-                checked={regIsAdmin}
-                onChange={() => {}} // tratado no div
-                className="mt-0.5 w-4 h-4 rounded text-amber-600 focus:ring-amber-500 border-slate-300 cursor-pointer"
-              />
-              <div className="flex-1 min-w-0">
-                <div className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                  <span className="text-amber-600">👑</span>
-                  <span>Esta conta é do Gestor / Chefe da equipe</span>
-                </div>
-                <p className="text-[11px] text-slate-500 mt-0.5 leading-snug">
-                  Garante permissão master para editar, aprovar e mover as tarefas de qualquer membro.
-                </p>
-              </div>
             </div>
 
             <div>

@@ -14,6 +14,7 @@ import {
   Shield,
   Crown,
   Users,
+  Code2,
 } from 'lucide-react';
 import { getUserInitials } from '../utils/helpers';
 
@@ -35,6 +36,7 @@ export function Navbar({
 }) {
   const [boardDropdownOpen, setBoardDropdownOpen] = useState(false);
   const isAdmin = currentUser?.is_admin === 1 || currentUser?.role?.toLowerCase().includes('gestor') || currentUser?.role?.toLowerCase().includes('chefe');
+  const isDev = currentUser?.role?.toLowerCase().includes('desenvolvedor') || currentUser?.role?.toLowerCase().includes('dev');
 
   return (
     <header className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-xs">
@@ -161,6 +163,11 @@ export function Navbar({
                   {isAdmin && (
                     <span className="inline-flex items-center gap-0.5 text-[10px] font-bold text-amber-700 bg-amber-100 px-1.5 py-0.2 rounded">
                       <Crown className="w-3 h-3 text-amber-600" /> Chefe/Gestor
+                    </span>
+                  )}
+                  {!isAdmin && isDev && (
+                    <span className="inline-flex items-center gap-0.5 text-[10px] font-bold text-indigo-700 bg-indigo-100 px-1.5 py-0.2 rounded">
+                      <Code2 className="w-3 h-3 text-indigo-600" /> Desenvolvedor
                     </span>
                   )}
                 </div>

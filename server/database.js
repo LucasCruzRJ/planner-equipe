@@ -125,6 +125,11 @@ export function initDatabase() {
     db.exec('ALTER TABLE comments ADD COLUMN author_id TEXT;');
   } catch {}
 
+  // Atualizar usuário inicial padrão para que Gestor não venha fixo
+  try {
+    db.prepare("UPDATE users SET is_admin = 0, role = 'Membro da Equipe' WHERE id = 'u-1' AND email = 'ana.silva@empresa.com' AND is_admin = 1").run();
+  } catch {}
+
   // 7. Tabela de Histórico / Log de Atividades
   db.exec(`
     CREATE TABLE IF NOT EXISTS activities (
@@ -155,8 +160,8 @@ function seedDefaultData() {
     `);
 
     const defaultUsers = [
-      ['u-1', 'Ana Silva', 'ana.silva@empresa.com', 'Gestora de Projetos (Chefe)', 1, hash, salt, '#8b5cf6'],
-      ['u-2', 'Carlos Eduardo', 'carlos.edu@empresa.com', 'Desenvolvedor / Técnico', 0, hash, salt, '#3b82f6'],
+      ['u-1', 'Ana Silva', 'ana.silva@empresa.com', 'Membro da Equipe', 0, hash, salt, '#8b5cf6'],
+      ['u-2', 'Carlos Eduardo', 'carlos.edu@empresa.com', 'Desenvolvedor', 0, hash, salt, '#3b82f6'],
       ['u-3', 'Mariana Costa', 'mariana.costa@empresa.com', 'Designer / UX', 0, hash, salt, '#ec4899'],
       ['u-4', 'Lucas Mendes', 'lucas.mendes@empresa.com', 'Analista de Operações', 0, hash, salt, '#10b981'],
     ];

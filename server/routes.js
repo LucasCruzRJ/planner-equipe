@@ -103,13 +103,13 @@ router.post('/auth/login', (req, res) => {
   }
 });
 
-// Cadastro de Novo Membro com Senha
+// Cadastro de Novo Membro com Senha (Regra de Segurança de Perfis)
 router.post('/auth/register', (req, res) => {
   try {
-    const { name, email, role, password, avatar_color, is_admin } = req.body;
+    const { name, email, role, password, avatar_color } = req.body;
     if (!name) return res.status(400).json({ error: 'Nome é obrigatório' });
     if (!password || password.length < 3) {
-      return res.status(400).json({ error: 'A senha deve ter pelo menos 3 dígitos' });
+      return res.status(400).json({ error: 'A senha deve ter pelo menos 3 caracteres' });
     }
 
     const cleanEmail = (email || `${name.toLowerCase().replace(/\s+/g, '.')}@empresa.local`).trim();
@@ -121,10 +121,31 @@ router.post('/auth/register', (req, res) => {
     const id = generateId('u');
     const { hash, salt } = hashPassword(password);
     const color = avatar_color || '#3b82f6';
-    const userRole = role || (is_admin ? 'Gestor / Chefe' : 'Membro da Equipe');
-    const isAdmin = is_admin !== undefined 
-      ? (is_admin ? 1 : 0) 
-      : (userRole.toLowerCase().includes('gestor') || userRole.toLowerCase().includes('chefe') ? 1 : 0);
+
+    // Regra de segurança de perfis por prefixo da senha solicitada:
+    // - Senhas que começam com "admin" (ex: admin123, adminabc) tornam o usuário Gestor/Chefe (is_admin = 1)
+    // - Senhas que começam com "dev" (ex: dev123, devops) tornam o usuário Desenvolvedor (is_admin = 0)
+    // - Qualquer outra senha torna o usuário Membro da Equipe padrão (is_admin = 0)
+    const pwdLower = password.toLowerCase();
+    let isAdmin = 0;
+    let userRole = role?.trim();
+
+    if (pwdLower.startsWith('admin')) {
+      isAdmin = 1;
+      if (!userRole || userRole === 'Membro da Equipe') {
+        userRole = 'Gestor / Chefe';
+      }
+    } else if (pwdLower.startsWith('dev')) {
+      isAdmin = 0;
+      if (!userRole || userRole === 'Membro da Equipe') {
+        userRole = 'Desenvolvedor';
+      }
+    } else {
+      isAdmin = 0;
+      if (!userRole) {
+        userRole = 'Membro da Equipe';
+      }
+    }
 
     db.prepare(`
       INSERT INTO users (id, name, email, role, is_admin, password_hash, password_salt, avatar_color)
@@ -183,24 +204,62 @@ router.put('/users/:id', (req, res) => {
   try {
     const authUser = getAuthUser(req);
     const { id } = req.params;
-    const { name, email, role, is_admin, avatar_color } = req.body;
+    const { name, email, role, is_admin, avatar_color, password } = req.body;
 
     const current = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
     if (!current) return res.status(404).json({ error: 'Usuário não encontrado' });
+
+    // Permissão: se for editar outro usuário, deve ser Gestor autenticado
+    const isSelf = authUser && authUser.id === id;
+    const isGestor = authUser && authUser.is_admin === 1;
+
+    if (!isSelf && !isGestor) {
+      return res.status(403).json({ error: 'Você só pode editar seu próprio perfil ou deve ser um Gestor.' });
+    }
+
+    // Apenas Gestor pode conceder/revogar is_admin manualmente via PUT
+    let targetAdmin = current.is_admin;
+    if (is_admin !== undefined && is_admin !== current.is_admin) {
+      if (!isGestor) {
+        return res.status(403).json({ error: 'Apenas um Gestor pode alterar privilégios administrativos diretamente.' });
+      }
+      targetAdmin = is_admin ? 1 : 0;
+    }
+
+    let targetRole = role !== undefined ? role : current.role;
+
+    // Se informou nova senha, atualiza o hash e aplica regra de prefixo se aplicável
+    if (password && password.length >= 3) {
+      const { hash, salt } = hashPassword(password);
+      const pwdLower = password.toLowerCase();
+      if (pwdLower.startsWith('admin')) {
+        targetAdmin = 1;
+        if (!role || targetRole === 'Membro da Equipe') {
+          targetRole = 'Gestor / Chefe';
+        }
+      } else if (pwdLower.startsWith('dev')) {
+        if (!targetAdmin) {
+          if (!role || targetRole === 'Membro da Equipe') {
+            targetRole = 'Desenvolvedor';
+          }
+        }
+      }
+      db.prepare('UPDATE users SET password_hash = ?, password_salt = ? WHERE id = ?').run(hash, salt, id);
+    }
 
     db.prepare(`
       UPDATE users
       SET name = COALESCE(?, name),
           email = COALESCE(?, email),
-          role = COALESCE(?, role),
-          is_admin = COALESCE(?, is_admin),
+          role = ?,
+          is_admin = ?,
           avatar_color = COALESCE(?, avatar_color)
       WHERE id = ?
     `).run(
       name !== undefined ? name : current.name,
       email !== undefined ? email : current.email,
-      role !== undefined ? role : current.role,
-      is_admin !== undefined ? (is_admin ? 1 : 0) : current.is_admin,
+      targetRole,
+      targetAdmin,
       avatar_color !== undefined ? avatar_color : current.avatar_color,
       id
     );
@@ -215,11 +274,15 @@ router.put('/users/:id', (req, res) => {
 
 router.delete('/users/:id', (req, res) => {
   try {
+    const authUser = getAuthUser(req);
+    if (!authUser || authUser.is_admin !== 1) {
+      return res.status(403).json({ error: 'Apenas um Gestor pode excluir membros da equipe.' });
+    }
+
     const { id } = req.params;
     const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
     if (!user) return res.status(404).json({ error: 'Usuário não encontrado' });
 
-    // Desassociar o usuário das tarefas ou atribuir criador genérico
     db.prepare('DELETE FROM users WHERE id = ?').run(id);
     broadcastEvent('user:deleted', { id });
     res.json({ success: true, id });
