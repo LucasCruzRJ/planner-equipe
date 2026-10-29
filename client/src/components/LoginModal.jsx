@@ -13,6 +13,7 @@ export function LoginModal({ users, onLogin, onRegister }) {
   const [regEmail, setRegEmail] = useState('');
   const [regPassword, setRegPassword] = useState('');
   const [regRole, setRegRole] = useState('Membro da Equipe');
+  const [regIsAdmin, setRegIsAdmin] = useState(false);
   const [regColor, setRegColor] = useState('#3b82f6');
   
   const [errorMsg, setErrorMsg] = useState('');
@@ -95,8 +96,9 @@ export function LoginModal({ users, onLogin, onRegister }) {
           name: regName.trim(),
           email: regEmail.trim(),
           password: regPassword.trim(),
-          role: regRole.trim(),
+          role: regRole.trim() || (regIsAdmin ? 'Gestor / Chefe' : 'Membro da Equipe'),
           avatar_color: regColor,
+          is_admin: regIsAdmin,
         }),
       });
 
@@ -337,6 +339,40 @@ export function LoginModal({ users, onLogin, onRegister }) {
                 placeholder="roberto@empresa.com"
                 className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:border-blue-500 focus:outline-hidden"
               />
+            </div>
+
+            {/* Opção para Chefe / Gestor */}
+            <div 
+              onClick={() => {
+                const next = !regIsAdmin;
+                setRegIsAdmin(next);
+                if (next && regRole === 'Membro da Equipe') {
+                  setRegRole('Gestor / Chefe');
+                } else if (!next && regRole === 'Gestor / Chefe') {
+                  setRegRole('Membro da Equipe');
+                }
+              }}
+              className={`p-3 rounded-2xl border cursor-pointer transition flex items-start gap-3 select-none ${
+                regIsAdmin
+                  ? 'bg-amber-50/80 border-amber-300 ring-2 ring-amber-400/20'
+                  : 'bg-slate-50 border-slate-200 hover:bg-slate-100/70'
+              }`}
+            >
+              <input
+                type="checkbox"
+                checked={regIsAdmin}
+                onChange={() => {}} // tratado no div
+                className="mt-0.5 w-4 h-4 rounded text-amber-600 focus:ring-amber-500 border-slate-300 cursor-pointer"
+              />
+              <div className="flex-1 min-w-0">
+                <div className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                  <span className="text-amber-600">👑</span>
+                  <span>Esta conta é do Gestor / Chefe da equipe</span>
+                </div>
+                <p className="text-[11px] text-slate-500 mt-0.5 leading-snug">
+                  Garante permissão master para editar, aprovar e mover as tarefas de qualquer membro.
+                </p>
+              </div>
             </div>
 
             <div>

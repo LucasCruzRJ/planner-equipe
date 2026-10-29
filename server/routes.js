@@ -106,7 +106,7 @@ router.post('/auth/login', (req, res) => {
 // Cadastro de Novo Membro com Senha
 router.post('/auth/register', (req, res) => {
   try {
-    const { name, email, role, password, avatar_color } = req.body;
+    const { name, email, role, password, avatar_color, is_admin } = req.body;
     if (!name) return res.status(400).json({ error: 'Nome é obrigatório' });
     if (!password || password.length < 3) {
       return res.status(400).json({ error: 'A senha deve ter pelo menos 3 dígitos' });
@@ -121,8 +121,10 @@ router.post('/auth/register', (req, res) => {
     const id = generateId('u');
     const { hash, salt } = hashPassword(password);
     const color = avatar_color || '#3b82f6';
-    const userRole = role || 'Membro da Equipe';
-    const isAdmin = userRole.toLowerCase().includes('gestor') || userRole.toLowerCase().includes('chefe') ? 1 : 0;
+    const userRole = role || (is_admin ? 'Gestor / Chefe' : 'Membro da Equipe');
+    const isAdmin = is_admin !== undefined 
+      ? (is_admin ? 1 : 0) 
+      : (userRole.toLowerCase().includes('gestor') || userRole.toLowerCase().includes('chefe') ? 1 : 0);
 
     db.prepare(`
       INSERT INTO users (id, name, email, role, is_admin, password_hash, password_salt, avatar_color)
@@ -172,6 +174,55 @@ router.get('/users', (req, res) => {
   try {
     const users = db.prepare('SELECT id, name, email, role, is_admin, avatar_color, created_at FROM users ORDER BY is_admin DESC, name ASC').all();
     res.json(users);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.put('/users/:id', (req, res) => {
+  try {
+    const authUser = getAuthUser(req);
+    const { id } = req.params;
+    const { name, email, role, is_admin, avatar_color } = req.body;
+
+    const current = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+    if (!current) return res.status(404).json({ error: 'Usuário não encontrado' });
+
+    db.prepare(`
+      UPDATE users
+      SET name = COALESCE(?, name),
+          email = COALESCE(?, email),
+          role = COALESCE(?, role),
+          is_admin = COALESCE(?, is_admin),
+          avatar_color = COALESCE(?, avatar_color)
+      WHERE id = ?
+    `).run(
+      name !== undefined ? name : current.name,
+      email !== undefined ? email : current.email,
+      role !== undefined ? role : current.role,
+      is_admin !== undefined ? (is_admin ? 1 : 0) : current.is_admin,
+      avatar_color !== undefined ? avatar_color : current.avatar_color,
+      id
+    );
+
+    const updatedUser = db.prepare('SELECT id, name, email, role, is_admin, avatar_color, created_at FROM users WHERE id = ?').get(id);
+    broadcastEvent('user:updated', updatedUser);
+    res.json(updatedUser);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.delete('/users/:id', (req, res) => {
+  try {
+    const { id } = req.params;
+    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+    if (!user) return res.status(404).json({ error: 'Usuário não encontrado' });
+
+    // Desassociar o usuário das tarefas ou atribuir criador genérico
+    db.prepare('DELETE FROM users WHERE id = ?').run(id);
+    broadcastEvent('user:deleted', { id });
+    res.json({ success: true, id });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

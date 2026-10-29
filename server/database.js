@@ -165,20 +165,13 @@ function seedDefaultData() {
       insertUser.run(...u);
     }
   } else {
-    // Atualizar senhas e admin para usuários que ainda não tenham hash
+    // Atualizar senhas para usuários antigos que ainda não tenham hash
     db.prepare(`
       UPDATE users
       SET password_hash = COALESCE(password_hash, ?),
           password_salt = COALESCE(password_salt, ?)
       WHERE password_hash IS NULL
     `).run(hash, salt);
-
-    // Garantir que a Gestora seja Admin
-    db.prepare(`
-      UPDATE users
-      SET is_admin = 1, role = 'Gestora de Projetos (Chefe)'
-      WHERE id = 'u-1' OR email = 'ana.silva@empresa.com'
-    `).run();
   }
 
   const boardCount = db.prepare('SELECT count(*) as count FROM boards').get().count;

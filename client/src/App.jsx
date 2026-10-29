@@ -9,6 +9,7 @@ import { TaskModal } from './components/TaskModal';
 import { NewTaskModal } from './components/NewTaskModal';
 import { NewBoardModal } from './components/NewBoardModal';
 import { ShareModal } from './components/ShareModal';
+import { TeamModal } from './components/TeamModal';
 import { LoginModal } from './components/LoginModal';
 import { NotificationToast } from './components/NotificationToast';
 import { usePlannerSocket } from './hooks/usePlannerSocket';
@@ -52,6 +53,7 @@ export function App() {
   const [newTaskDueDate, setNewTaskDueDate] = useState(null);
   const [isNewBoardOpen, setIsNewBoardOpen] = useState(false);
   const [isShareOpen, setIsShareOpen] = useState(false);
+  const [isTeamOpen, setIsTeamOpen] = useState(false);
 
   // Hook de WebSockets para Sincronização em Tempo Real
   const { connected, onlineUsers, notifications, registerCallbacks } = usePlannerSocket(
@@ -278,6 +280,43 @@ export function App() {
     setAuthToken(null);
     localStorage.removeItem('planner_user');
     localStorage.removeItem('planner_token');
+  };
+
+  const handleUpdateUser = async (userId, fields) => {
+    try {
+      const res = await fetch(`/api/users/${userId}`, {
+        method: 'PUT',
+        headers: authHeaders(),
+        body: JSON.stringify(fields),
+      });
+      if (res.ok) {
+        const updated = await res.json();
+        setUsers((prev) => prev.map((u) => (u.id === userId ? updated : u)));
+        if (currentUser?.id === userId) {
+          setCurrentUser(updated);
+          localStorage.setItem('planner_user', JSON.stringify(updated));
+        }
+      }
+    } catch (err) {
+      console.error('Erro ao atualizar usuário:', err);
+    }
+  };
+
+  const handleDeleteUser = async (userId) => {
+    try {
+      const res = await fetch(`/api/users/${userId}`, {
+        method: 'DELETE',
+        headers: authHeaders(),
+      });
+      if (res.ok) {
+        setUsers((prev) => prev.filter((u) => u.id !== userId));
+        if (currentUser?.id === userId) {
+          handleLogout();
+        }
+      }
+    } catch (err) {
+      console.error('Erro ao excluir usuário:', err);
+    }
   };
 
   // Ações de Quadros
@@ -650,6 +689,7 @@ export function App() {
         connected={connected}
         currentUser={currentUser}
         onLogout={handleLogout}
+        onOpenTeam={() => setIsTeamOpen(true)}
         onOpenShare={() => setIsShareOpen(true)}
         onNewTask={() => {
           setNewTaskColumnId(columns[0]?.id);
@@ -787,6 +827,16 @@ export function App() {
 
       {isShareOpen && (
         <ShareModal onClose={() => setIsShareOpen(false)} />
+      )}
+
+      {isTeamOpen && (
+        <TeamModal
+          users={users}
+          currentUser={currentUser}
+          onClose={() => setIsTeamOpen(false)}
+          onUpdateUser={handleUpdateUser}
+          onDeleteUser={handleDeleteUser}
+        />
       )}
 
       {/* Notificações em Tempo Real */}

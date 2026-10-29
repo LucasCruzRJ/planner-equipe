@@ -13,6 +13,7 @@ import {
   LogOut,
   Shield,
   Crown,
+  Users,
 } from 'lucide-react';
 import { getUserInitials } from '../utils/helpers';
 
@@ -27,6 +28,7 @@ export function Navbar({
   connected,
   currentUser,
   onLogout,
+  onOpenTeam,
   onOpenShare,
   onNewTask,
   onExportCsv,
@@ -174,6 +176,16 @@ export function Navbar({
                 <LogOut className="w-4 h-4" />
               </button>
             </div>
+
+            {/* Gerenciar Membros da Equipe */}
+            <button
+              onClick={onOpenTeam}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition"
+              title="Gerenciar membros, definir Gestor/Chefe ou editar nomes"
+            >
+              <Users className="w-3.5 h-3.5 text-blue-600" />
+              <span className="hidden sm:inline">Equipe</span>
+            </button>
 
             {/* Compartilhar na Rede (Link para a equipe) */}
             <button
