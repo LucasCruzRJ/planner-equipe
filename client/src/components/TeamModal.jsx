@@ -76,18 +76,6 @@ export function TeamModal({
           </button>
         </div>
 
-        {/* Dica Informativa de Segurança */}
-        <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200 text-xs text-slate-700 flex items-start gap-2.5">
-          <Shield className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
-          <div className="text-[11px] leading-relaxed">
-            <span className="font-bold text-slate-900">Controle Seguro de Perfis:</span>
-            <p className="text-slate-600 mt-0.5">
-              • Senhas iniciadas com <code className="bg-slate-200 px-1 py-0.5 rounded text-slate-800 font-mono font-bold">admin</code> (ex: admin123) viram <strong>👑 Gestor/Chefe</strong> com acesso master total.<br />
-              • Senhas iniciadas com <code className="bg-slate-200 px-1 py-0.5 rounded text-slate-800 font-mono font-bold">dev</code> (ex: dev123) viram <strong>💻 Desenvolvedor</strong>.
-            </p>
-          </div>
-        </div>
-
         {/* Lista de Membros */}
         <div className="overflow-y-auto space-y-2.5 flex-1 pr-1">
           {users.map((u) => {
@@ -124,7 +112,7 @@ export function TeamModal({
 
                   <div>
                     <label className="text-[11px] font-bold text-slate-600 block mb-1">
-                      Nova Senha (opcional - inicie com admin ou dev para atualizar perfil)
+                      Nova Senha (opcional)
                     </label>
                     <input
                       type="password"

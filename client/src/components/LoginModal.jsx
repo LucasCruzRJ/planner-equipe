@@ -23,11 +23,6 @@ export function LoginModal({ users, onLogin, onRegister }) {
     '#f59e0b', '#10b981', '#06b6d4', '#64748b'
   ];
 
-  // Detecção em tempo real do perfil pelo prefixo da senha
-  const cleanRegPwd = regPassword.trim().toLowerCase();
-  const isDetectedAdmin = cleanRegPwd.startsWith('admin');
-  const isDetectedDev = cleanRegPwd.startsWith('dev');
-
   const handleQuickLogin = async (e) => {
     e.preventDefault();
     if (!selectedUser) return;
@@ -93,14 +88,6 @@ export function LoginModal({ users, onLogin, onRegister }) {
     setLoading(true);
 
     try {
-      // O perfil de Gestor ou Desenvolvedor é validado no servidor pelo prefixo da senha
-      let targetRole = regRole.trim();
-      if (isDetectedAdmin && (!targetRole || targetRole === 'Membro da Equipe')) {
-        targetRole = 'Gestor / Chefe';
-      } else if (isDetectedDev && (!targetRole || targetRole === 'Membro da Equipe')) {
-        targetRole = 'Desenvolvedor';
-      }
-
       const res = await fetch('/api/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -108,7 +95,7 @@ export function LoginModal({ users, onLogin, onRegister }) {
           name: regName.trim(),
           email: regEmail.trim(),
           password: regPassword.trim(),
-          role: targetRole || 'Membro da Equipe',
+          role: regRole.trim() || 'Membro da Equipe',
           avatar_color: regColor,
         }),
       });
@@ -347,43 +334,6 @@ export function LoginModal({ users, onLogin, onRegister }) {
                 />
               </div>
             </div>
-
-            {/* Indicador Dinâmico de Perfil de Acesso por Senha */}
-            {isDetectedAdmin ? (
-              <div className="p-3 rounded-2xl bg-amber-50 border border-amber-300 text-amber-900 text-xs flex items-start gap-2.5 animate-fade-in shadow-2xs">
-                <Crown className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
-                <div className="leading-snug">
-                  <div className="font-bold flex items-center gap-1 text-amber-900">
-                    👑 Código de Gestor / Chefe Reconhecido!
-                  </div>
-                  <p className="text-[11px] text-amber-700 mt-0.5">
-                    Sua senha começa com <strong>"admin"</strong>. Esta conta terá <strong>acesso Master total</strong> para gerenciar a equipe e qualquer tarefa do quadro.
-                  </p>
-                </div>
-              </div>
-            ) : isDetectedDev ? (
-              <div className="p-3 rounded-2xl bg-indigo-50 border border-indigo-300 text-indigo-900 text-xs flex items-start gap-2.5 animate-fade-in shadow-2xs">
-                <Code2 className="w-5 h-5 text-indigo-600 shrink-0 mt-0.5" />
-                <div className="leading-snug">
-                  <div className="font-bold flex items-center gap-1 text-indigo-900">
-                    💻 Código de Desenvolvedor Reconhecido!
-                  </div>
-                  <p className="text-[11px] text-indigo-700 mt-0.5">
-                    Sua senha começa com <strong>"dev"</strong>. Esta conta será identificada com a função de <strong>Desenvolvedor</strong>.
-                  </p>
-                </div>
-              </div>
-            ) : (
-              <div className="p-2.5 rounded-2xl bg-slate-50 border border-slate-200 text-slate-600 text-xs flex items-start gap-2">
-                <KeyRound className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" />
-                <div className="text-[11px] leading-snug">
-                  <span className="font-semibold text-slate-700">Chaves de Perfil: </span>
-                  <span className="text-slate-500">
-                    Inicie a senha com <strong>"admin"</strong> (ex: <code className="bg-slate-200 px-1 rounded text-slate-800">admin123</code>) para <strong>Gestor</strong>, ou com <strong>"dev"</strong> (ex: <code className="bg-slate-200 px-1 rounded text-slate-800">dev123</code>) para <strong>Desenvolvedor</strong>.
-                  </span>
-                </div>
-              </div>
-            )}
 
             <div>
               <label className="text-xs font-bold text-slate-700 block mb-1">E-mail (opcional)</label>
