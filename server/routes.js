@@ -49,10 +49,10 @@ function canUserModifyTask(user, task) {
 // 1. AUTENTICAÇÃO E CONTROLE DE ACESSO
 // ==========================================
 
-// Login com E-mail ou Seleção de Usuário + Senha/PIN
+// Login com E-mail, Nome ou Seleção de Usuário + Senha
 router.post('/auth/login', (req, res) => {
   try {
-    const { email, userId, password } = req.body;
+    const { email, identifier, userId, password } = req.body;
     if (!password) {
       return res.status(400).json({ error: 'Senha é obrigatória' });
     }
@@ -60,12 +60,21 @@ router.post('/auth/login', (req, res) => {
     let user = null;
     if (userId) {
       user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
-    } else if (email) {
-      user = db.prepare('SELECT * FROM users WHERE LOWER(email) = LOWER(?)').get(email.trim());
+    } else {
+      const loginTerm = (identifier || email || '').trim();
+      if (!loginTerm) {
+        return res.status(400).json({ error: 'Informe seu nome ou e-mail de acesso' });
+      }
+      // Busca flexível: aceita tanto o e-mail exato quanto o nome do usuário cadastrado
+      user = db.prepare(`
+        SELECT * FROM users 
+        WHERE LOWER(email) = LOWER(?) 
+           OR LOWER(name) = LOWER(?)
+      `).get(loginTerm, loginTerm);
     }
 
     if (!user) {
-      return res.status(401).json({ error: 'Usuário não encontrado' });
+      return res.status(401).json({ error: 'Usuário não encontrado. Verifique seu nome/e-mail ou faça um novo cadastro.' });
     }
 
     // Se o usuário não tem senha cadastrada, aceita '1234' e salva o hash
@@ -81,7 +90,7 @@ router.post('/auth/login', (req, res) => {
     }
 
     if (!isValid) {
-      return res.status(401).json({ error: 'Senha incorreta. Tente novamente ou use a senha padrão (1234).' });
+      return res.status(401).json({ error: 'Senha incorreta. Tente novamente.' });
     }
 
     const token = generateToken(user);
@@ -107,16 +116,21 @@ router.post('/auth/login', (req, res) => {
 router.post('/auth/register', (req, res) => {
   try {
     const { name, email, role, password, avatar_color } = req.body;
-    if (!name) return res.status(400).json({ error: 'Nome é obrigatório' });
+    if (!name || !name.trim()) return res.status(400).json({ error: 'Nome é obrigatório' });
     if (!password || password.length < 3) {
       return res.status(400).json({ error: 'A senha deve ter pelo menos 3 caracteres' });
     }
 
-    const cleanEmail = (email || `${name.toLowerCase().replace(/\s+/g, '.')}@empresa.local`).trim();
-    const existing = db.prepare('SELECT id FROM users WHERE LOWER(email) = LOWER(?)').get(cleanEmail);
-    if (existing) {
-      return res.status(400).json({ error: 'Já existe um usuário com este e-mail' });
+    const providedEmail = email?.trim();
+    if (providedEmail) {
+      const existing = db.prepare('SELECT id FROM users WHERE LOWER(email) = LOWER(?)').get(providedEmail);
+      if (existing) {
+        return res.status(400).json({ error: 'Já existe um usuário com este e-mail' });
+      }
     }
+
+    // Se não forneceu e-mail, gera um identificador limpo e único
+    const cleanEmail = providedEmail || `${name.trim().toLowerCase().replace(/[^a-z0-9]/gi, '.')}.${Date.now().toString(36)}@equipe.local`;
 
     const id = generateId('u');
     const { hash, salt } = hashPassword(password);
@@ -773,8 +787,108 @@ router.post('/tasks/:id/comments', (req, res) => {
 });
 
 // ==========================================
-// 10. EXPORTAÇÃO EXCEL / CSV
+// 10. EXPORTAÇÃO EXCEL / CSV E BACKUP DO SISTEMA
 // ==========================================
+router.get('/system/backup', (req, res) => {
+  try {
+    const users = db.prepare('SELECT id, name, email, role, is_admin, password_hash, password_salt, avatar_color, created_at FROM users').all();
+    const boards = db.prepare('SELECT * FROM boards').all();
+    const columns = db.prepare('SELECT * FROM columns').all();
+    const tasks = db.prepare('SELECT * FROM tasks').all();
+    const subtasks = db.prepare('SELECT * FROM subtasks').all();
+    const comments = db.prepare('SELECT * FROM comments').all();
+
+    const backupData = {
+      version: '1.0',
+      exported_at: new Date().toISOString(),
+      users,
+      boards,
+      columns,
+      tasks,
+      subtasks,
+      comments,
+    };
+
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename=planner_backup_${Date.now()}.json`);
+    res.json(backupData);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.post('/system/restore', (req, res) => {
+  try {
+    const authUser = getAuthUser(req);
+    // Apenas Gestor pode restaurar backup completo
+    if (!authUser || authUser.is_admin !== 1) {
+      return res.status(403).json({ error: 'Apenas Gestor/Chefe pode restaurar backups.' });
+    }
+
+    const { users, boards, columns, tasks, subtasks, comments } = req.body;
+    if (!boards || !columns) {
+      return res.status(400).json({ error: 'Formato de backup inválido.' });
+    }
+
+    const restoreTransaction = db.transaction(() => {
+      if (users && users.length > 0) {
+        for (const u of users) {
+          db.prepare(`
+            INSERT OR REPLACE INTO users (id, name, email, role, is_admin, password_hash, password_salt, avatar_color)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          `).run(u.id, u.name, u.email, u.role, u.is_admin, u.password_hash, u.password_salt, u.avatar_color);
+        }
+      }
+
+      for (const b of boards) {
+        db.prepare(`
+          INSERT OR REPLACE INTO boards (id, title, description, color, icon)
+          VALUES (?, ?, ?, ?, ?)
+        `).run(b.id, b.title, b.description, b.color, b.icon);
+      }
+
+      for (const c of columns) {
+        db.prepare(`
+          INSERT OR REPLACE INTO columns (id, board_id, title, position, color)
+          VALUES (?, ?, ?, ?, ?)
+        `).run(c.id, c.board_id, c.title, c.position, c.color);
+      }
+
+      if (tasks && tasks.length > 0) {
+        for (const t of tasks) {
+          db.prepare(`
+            INSERT OR REPLACE INTO tasks (id, board_id, column_id, title, description, priority, start_date, due_date, position, color, tags, assignees, created_by, created_by_user_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `).run(t.id, t.board_id, t.column_id, t.title, t.description, t.priority, t.start_date, t.due_date, t.position, t.color, t.tags, t.assignees, t.created_by, t.created_by_user_id);
+        }
+      }
+
+      if (subtasks && subtasks.length > 0) {
+        for (const st of subtasks) {
+          db.prepare(`
+            INSERT OR REPLACE INTO subtasks (id, task_id, title, completed, position)
+            VALUES (?, ?, ?, ?, ?)
+          `).run(st.id, st.task_id, st.title, st.completed, st.position);
+        }
+      }
+
+      if (comments && comments.length > 0) {
+        for (const cm of comments) {
+          db.prepare(`
+            INSERT OR REPLACE INTO comments (id, task_id, author_name, author_id, author_avatar, content)
+            VALUES (?, ?, ?, ?, ?, ?)
+          `).run(cm.id, cm.task_id, cm.author_name, cm.author_id, cm.author_avatar, cm.content);
+        }
+      }
+    });
+
+    restoreTransaction();
+    res.json({ success: true, message: 'Dados restaurados com sucesso!' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 router.get('/export/:boardId', (req, res) => {
   try {
     const { boardId } = req.params;

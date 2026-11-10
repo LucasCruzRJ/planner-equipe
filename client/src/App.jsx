@@ -256,6 +256,19 @@ export function App() {
           setActiveBoard((prev) => (prev && prev.id === data.id ? { ...prev, ...data } : prev));
         }
       },
+      onUserChange: (action, data) => {
+        if (action === 'create') {
+          setUsers((prev) => {
+            if (prev.some((u) => u.id === data.id)) return prev;
+            return [...prev, data];
+          });
+        } else if (action === 'update') {
+          setUsers((prev) => prev.map((u) => (u.id === data.id ? { ...u, ...data } : u)));
+          setCurrentUser((prev) => (prev && prev.id === data.id ? { ...prev, ...data } : prev));
+        } else if (action === 'delete') {
+          setUsers((prev) => prev.filter((u) => u.id !== data.id));
+        }
+      },
     });
   }, [registerCallbacks]);
 

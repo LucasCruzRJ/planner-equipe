@@ -125,9 +125,14 @@ export function initDatabase() {
     db.exec('ALTER TABLE comments ADD COLUMN author_id TEXT;');
   } catch {}
 
-  // Atualizar usuário inicial padrão para que Gestor não venha fixo
+  // Limpeza de usuários e tarefas de teste legados a pedido do usuário
   try {
-    db.prepare("UPDATE users SET is_admin = 0, role = 'Membro da Equipe' WHERE id = 'u-1' AND email = 'ana.silva@empresa.com' AND is_admin = 1").run();
+    db.exec(`
+      DELETE FROM subtasks WHERE task_id IN ('task-1', 'task-2', 'task-3', 'task-4', 'task-5');
+      DELETE FROM comments WHERE task_id IN ('task-1', 'task-2', 'task-3', 'task-4', 'task-5') OR author_id IN ('u-1', 'u-2', 'u-3', 'u-4', 'u-5');
+      DELETE FROM tasks WHERE id IN ('task-1', 'task-2', 'task-3', 'task-4', 'task-5');
+      DELETE FROM users WHERE id IN ('u-1', 'u-2', 'u-3', 'u-4', 'u-5');
+    `);
   } catch {}
 
   // 7. Tabela de Histórico / Log de Atividades
@@ -144,41 +149,12 @@ export function initDatabase() {
     );
   `);
 
-  // Seed / Atualização de dados padrão com autenticação
+  // Seed / Atualização de dados padrão (sem dados fictícios)
   seedDefaultData();
 }
 
 function seedDefaultData() {
-  const defaultPassword = '1234';
-  const { hash, salt } = hashPassword(defaultPassword);
-
-  const userCount = db.prepare('SELECT count(*) as count FROM users').get().count;
-  if (userCount === 0) {
-    const insertUser = db.prepare(`
-      INSERT INTO users (id, name, email, role, is_admin, password_hash, password_salt, avatar_color)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-
-    const defaultUsers = [
-      ['u-1', 'Ana Silva', 'ana.silva@empresa.com', 'Membro da Equipe', 0, hash, salt, '#8b5cf6'],
-      ['u-2', 'Carlos Eduardo', 'carlos.edu@empresa.com', 'Desenvolvedor', 0, hash, salt, '#3b82f6'],
-      ['u-3', 'Mariana Costa', 'mariana.costa@empresa.com', 'Designer / UX', 0, hash, salt, '#ec4899'],
-      ['u-4', 'Lucas Mendes', 'lucas.mendes@empresa.com', 'Analista de Operações', 0, hash, salt, '#10b981'],
-    ];
-
-    for (const u of defaultUsers) {
-      insertUser.run(...u);
-    }
-  } else {
-    // Atualizar senhas para usuários antigos que ainda não tenham hash
-    db.prepare(`
-      UPDATE users
-      SET password_hash = COALESCE(password_hash, ?),
-          password_salt = COALESCE(password_salt, ?)
-      WHERE password_hash IS NULL
-    `).run(hash, salt);
-  }
-
+  // Não criamos usuários default: a equipe cadastra seus próprios membros reais.
   const boardCount = db.prepare('SELECT count(*) as count FROM boards').get().count;
   if (boardCount === 0) {
     const boardId = 'board-default';
@@ -208,149 +184,7 @@ function seedDefaultData() {
     for (const col of defaultColumns) {
       insertCol.run(...col);
     }
-
-    // Tarefas de exemplo com prazos realistas e criadores definidos
-    const today = new Date();
-    const tomorrow = new Date(today);
-    tomorrow.setDate(today.getDate() + 1);
-    const nextWeek = new Date(today);
-    nextWeek.setDate(today.getDate() + 7);
-    const yesterday = new Date(today);
-    yesterday.setDate(today.getDate() - 1);
-
-    const formatDate = (d) => d.toISOString().split('T')[0];
-
-    const insertTask = db.prepare(`
-      INSERT INTO tasks (id, board_id, column_id, title, description, priority, start_date, due_date, position, tags, assignees, created_by, created_by_user_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-
-    const defaultTasks = [
-      [
-        'task-1',
-        boardId,
-        'col-3',
-        'Estruturar o novo fluxo de entregas da equipe',
-        'Alinhar o passo a passo com todos os responsáveis para garantir visibilidade e prazos cumpridos.',
-        'alta',
-        formatDate(today),
-        formatDate(tomorrow),
-        0,
-        JSON.stringify(['Planejamento', 'Processos']),
-        JSON.stringify(['u-1', 'u-2']),
-        'Ana Silva',
-        'u-1'
-      ],
-      [
-        'task-2',
-        boardId,
-        'col-2',
-        'Revisar relatórios de desempenho mensal',
-        'Compilar os dados de produtividade e preparar a apresentação para a diretoria.',
-        'urgente',
-        formatDate(today),
-        formatDate(today),
-        0,
-        JSON.stringify(['Relatório', 'Urgente']),
-        JSON.stringify(['u-4']),
-        'Lucas Mendes',
-        'u-4'
-      ],
-      [
-        'task-3',
-        boardId,
-        'col-4',
-        'Validar protótipos de telas e usabilidade',
-        'Coletar feedback da equipe sobre os novos layouts e componentes visuais.',
-        'media',
-        formatDate(yesterday),
-        formatDate(nextWeek),
-        0,
-        JSON.stringify(['Design', 'UX']),
-        JSON.stringify(['u-3']),
-        'Mariana Costa',
-        'u-3'
-      ],
-      [
-        'task-4',
-        boardId,
-        'col-5',
-        'Configuração inicial do Planner de Equipe',
-        'Instalação e disponibilização do sistema na nuvem com autenticação segura.',
-        'alta',
-        formatDate(yesterday),
-        formatDate(today),
-        0,
-        JSON.stringify(['TI', 'Infra']),
-        JSON.stringify(['u-2']),
-        'Carlos Eduardo',
-        'u-2'
-      ],
-      [
-        'task-5',
-        boardId,
-        'col-1',
-        'Pesquisar integrações com notificações automáticas',
-        'Verificar viabilidade de alertas sonoros e e-mails para tarefas com prazo próximo.',
-        'baixa',
-        null,
-        null,
-        0,
-        JSON.stringify(['Melhorias', 'Inovação']),
-        JSON.stringify(['u-2']),
-        'Carlos Eduardo',
-        'u-2'
-      ]
-    ];
-
-    for (const t of defaultTasks) {
-      insertTask.run(...t);
-    }
-
-    // Subtarefas para a tarefa 1
-    const insertSubtask = db.prepare(`
-      INSERT INTO subtasks (id, task_id, title, completed, position) VALUES (?, ?, ?, ?, ?)
-    `);
-
-    insertSubtask.run('st-1', 'task-1', 'Mapear responsáveis por cada etapa', 1, 0);
-    insertSubtask.run('st-2', 'task-1', 'Definir critérios de conclusão (DoD)', 1, 1);
-    insertSubtask.run('st-3', 'task-1', 'Apresentar modelo na reunião semanal', 0, 2);
-
-    // Subtarefas para a tarefa 4
-    insertSubtask.run('st-4', 'task-4', 'Configurar servidor em tempo real', 1, 0);
-    insertSubtask.run('st-5', 'task-4', 'Testar conexão entre computadores na rede', 1, 1);
-
-    // Comentários de exemplo
-    const insertComment = db.prepare(`
-      INSERT INTO comments (id, task_id, author_name, author_id, author_avatar, content) VALUES (?, ?, ?, ?, ?, ?)
-    `);
-
-    insertComment.run(
-      'c-1',
-      'task-1',
-      'Ana Silva',
-      'u-1',
-      '#8b5cf6',
-      'Já adicionei os primeiros itens no checklist. Carlos, você pode dar uma olhada na etapa técnica?'
-    );
-
-    insertComment.run(
-      'c-2',
-      'task-1',
-      'Carlos Eduardo',
-      'u-2',
-      '#3b82f6',
-      'Perfeito Ana! Revisei e ajustei os prazos previstos. Tudo pronto para a reunião.'
-    );
-  } else {
-    // Atualizar tarefas legadas que não tinham created_by_user_id
-    db.prepare(`
-      UPDATE tasks
-      SET created_by_user_id = (
-        SELECT id FROM users WHERE users.name = tasks.created_by LIMIT 1
-      )
-      WHERE created_by_user_id IS NULL
-    `).run();
+    // Nenhuma tarefa fictícia é criada. O quadro começa limpo para a equipe.
   }
 }
 

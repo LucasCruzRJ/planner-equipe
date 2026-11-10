@@ -11,11 +11,13 @@ export function usePlannerSocket(activeBoardId, currentUser) {
   const onTaskChangeRef = useRef(null);
   const onColumnChangeRef = useRef(null);
   const onBoardChangeRef = useRef(null);
+  const onUserChangeRef = useRef(null);
 
-  const registerCallbacks = useCallback(({ onTaskChange, onColumnChange, onBoardChange }) => {
+  const registerCallbacks = useCallback(({ onTaskChange, onColumnChange, onBoardChange, onUserChange }) => {
     onTaskChangeRef.current = onTaskChange;
     onColumnChangeRef.current = onColumnChange;
     onBoardChangeRef.current = onBoardChange;
+    onUserChangeRef.current = onUserChange;
   }, []);
 
   const addNotification = useCallback((message, type = 'info') => {
@@ -125,6 +127,25 @@ export function usePlannerSocket(activeBoardId, currentUser) {
     socket.on('column:deleted', (data) => {
       if (onColumnChangeRef.current) {
         onColumnChangeRef.current('delete', data);
+      }
+    });
+
+    // Eventos de Usuários / Membros da Equipe
+    socket.on('user:created', (user) => {
+      if (onUserChangeRef.current) {
+        onUserChangeRef.current('create', user);
+      }
+    });
+
+    socket.on('user:updated', (user) => {
+      if (onUserChangeRef.current) {
+        onUserChangeRef.current('update', user);
+      }
+    });
+
+    socket.on('user:deleted', (data) => {
+      if (onUserChangeRef.current) {
+        onUserChangeRef.current('delete', data);
       }
     });
 

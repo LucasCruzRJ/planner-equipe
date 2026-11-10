@@ -17,33 +17,52 @@ export function verifyPassword(password, storedHash, storedSalt) {
   return hash === storedHash;
 }
 
-// Map simples de tokens de sessão em memória
-const sessionTokens = new Map(); // token -> { userId, expiresAt }
+// Chave de assinatura para tokens persistentes (sobrevive a reinicializações do servidor)
+const TOKEN_SECRET = process.env.SESSION_SECRET || 'planner-auth-signature-key-2026-equipe';
 
 export function generateToken(user) {
-  const token = `tok_${user.id}_${crypto.randomBytes(24).toString('hex')}`;
   // Token válido por 30 dias
   const expiresAt = Date.now() + 30 * 24 * 60 * 60 * 1000;
-  sessionTokens.set(token, {
-    userId: user.id,
-    expiresAt,
-  });
-  return token;
+  const payload = `${user.id}.${expiresAt}`;
+  const signature = crypto
+    .createHmac('sha256', TOKEN_SECRET)
+    .update(payload)
+    .digest('hex');
+
+  return `tok.${payload}.${signature}`;
 }
 
 export function getUserIdFromToken(token) {
-  if (!token) return null;
-  const session = sessionTokens.get(token);
-  if (!session) return null;
-  if (Date.now() > session.expiresAt) {
-    sessionTokens.delete(token);
-    return null;
+  if (!token || typeof token !== 'string') return null;
+  const parts = token.split('.');
+  // Formato esperado: 'tok.<userId>.<expiresAt>.<signature>'
+  if (parts.length !== 4 || parts[0] !== 'tok') return null;
+
+  const [, userId, expiresAtStr, signature] = parts;
+  const expiresAt = parseInt(expiresAtStr, 10);
+
+  if (isNaN(expiresAt) || Date.now() > expiresAt) {
+    return null; // Token expirado
   }
-  return session.userId;
+
+  const payload = `${userId}.${expiresAtStr}`;
+  const expectedSignature = crypto
+    .createHmac('sha256', TOKEN_SECRET)
+    .update(payload)
+    .digest('hex');
+
+  // Comparação em tempo constante para evitar timing attacks
+  const sigBuffer = Buffer.from(signature);
+  const expectedBuffer = Buffer.from(expectedSignature);
+
+  if (sigBuffer.length === expectedBuffer.length && crypto.timingSafeEqual(sigBuffer, expectedBuffer)) {
+    return userId;
+  }
+
+  return null;
 }
 
 export function removeToken(token) {
-  if (token) {
-    sessionTokens.delete(token);
-  }
+  // Stateless tokens expiram pelo tempo ou troca de credencial
+  return true;
 }

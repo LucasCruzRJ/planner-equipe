@@ -1,13 +1,17 @@
-import React, { useState } from 'react';
-import { Lock, User, UserPlus, LogIn, Shield, Check, AlertCircle, KeyRound, Sparkles, Code2, Crown } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Lock, User, UserPlus, LogIn, Shield, Check, AlertCircle, KeyRound, Search, Sparkles, Code2, Crown } from 'lucide-react';
 import { getUserInitials } from '../utils/helpers';
 
-export function LoginModal({ users, onLogin, onRegister }) {
-  const [mode, setMode] = useState('select'); // 'select' | 'email' | 'register'
+export function LoginModal({ users = [], onLogin, onRegister }) {
+  // Se não houver usuários cadastrados no sistema, abre direto em 'register'
+  const [mode, setMode] = useState(() => (users.length === 0 ? 'register' : 'direct')); // 'direct' | 'select' | 'register'
   const [selectedUser, setSelectedUser] = useState(users[0] || null);
-  const [password, setPassword] = useState('');
-  const [emailInput, setEmailInput] = useState('');
+  const [searchMember, setSearchMember] = useState('');
   
+  // Login Direto (Nome ou E-mail + Senha)
+  const [loginIdentifier, setLoginIdentifier] = useState('');
+  const [password, setPassword] = useState('');
+
   // Dados de Registro
   const [regName, setRegName] = useState('');
   const [regEmail, setRegEmail] = useState('');
@@ -23,9 +27,68 @@ export function LoginModal({ users, onLogin, onRegister }) {
     '#f59e0b', '#10b981', '#06b6d4', '#64748b'
   ];
 
+  // Sincroniza usuário selecionado quando a lista carregar
+  useEffect(() => {
+    if (users.length === 0) {
+      setMode('register');
+    } else if (!selectedUser) {
+      setSelectedUser(users[0]);
+    }
+  }, [users, selectedUser]);
+
+  // Lista de membros filtrada pela busca
+  const filteredUsers = useMemo(() => {
+    if (!searchMember.trim()) return users;
+    const q = searchMember.toLowerCase();
+    return users.filter((u) => 
+      u.name.toLowerCase().includes(q) || (u.role && u.role.toLowerCase().includes(q))
+    );
+  }, [users, searchMember]);
+
+  // 1. Login Direto (Digitando Nome ou E-mail + Senha)
+  const handleDirectLogin = async (e) => {
+    e.preventDefault();
+    if (!loginIdentifier.trim() || !password.trim()) {
+      setErrorMsg('Preencha seu nome/e-mail e sua senha');
+      return;
+    }
+    setErrorMsg('');
+    setLoading(true);
+
+    try {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          identifier: loginIdentifier.trim(),
+          password: password.trim(),
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Erro ao entrar');
+      }
+
+      onLogin(data.user, data.token);
+    } catch (err) {
+      setErrorMsg(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 2. Login Rápido (Selecionando o card do usuário na lista + Senha)
   const handleQuickLogin = async (e) => {
     e.preventDefault();
-    if (!selectedUser) return;
+    if (!selectedUser) {
+      setErrorMsg('Selecione seu usuário na lista');
+      return;
+    }
+    if (!password.trim()) {
+      setErrorMsg('Digite sua senha');
+      return;
+    }
     setErrorMsg('');
     setLoading(true);
 
@@ -52,38 +115,13 @@ export function LoginModal({ users, onLogin, onRegister }) {
     }
   };
 
-  const handleEmailLogin = async (e) => {
-    e.preventDefault();
-    if (!emailInput.trim() || !password.trim()) return;
-    setErrorMsg('');
-    setLoading(true);
-
-    try {
-      const res = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: emailInput.trim(),
-          password: password.trim(),
-        }),
-      });
-
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Erro ao entrar');
-      }
-
-      onLogin(data.user, data.token);
-    } catch (err) {
-      setErrorMsg(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
+  // 3. Cadastro de Novo Usuário
   const handleRegister = async (e) => {
     e.preventDefault();
-    if (!regName.trim() || !regPassword.trim()) return;
+    if (!regName.trim() || !regPassword.trim()) {
+      setErrorMsg('Nome e senha são obrigatórios');
+      return;
+    }
     setErrorMsg('');
     setLoading(true);
 
@@ -124,7 +162,7 @@ export function LoginModal({ users, onLogin, onRegister }) {
           </div>
           <h2 className="text-xl font-bold text-slate-900">Acesso ao Planner de Equipe</h2>
           <p className="text-xs text-slate-500">
-            Identifique-se com sua senha para proteger suas tarefas e acompanhar o quadro
+            Entre na sua conta para gerenciar e acompanhar as tarefas da sua equipe
           </p>
         </div>
 
@@ -141,6 +179,18 @@ export function LoginModal({ users, onLogin, onRegister }) {
           <button
             type="button"
             onClick={() => {
+              setMode('direct');
+              setErrorMsg('');
+            }}
+            className={`flex-1 py-2 rounded-lg transition ${
+              mode === 'direct' ? 'bg-white text-blue-600 shadow-2xs' : 'hover:text-slate-900'
+            }`}
+          >
+            Entrar
+          </button>
+          <button
+            type="button"
+            onClick={() => {
               setMode('select');
               setErrorMsg('');
             }}
@@ -148,19 +198,7 @@ export function LoginModal({ users, onLogin, onRegister }) {
               mode === 'select' ? 'bg-white text-blue-600 shadow-2xs' : 'hover:text-slate-900'
             }`}
           >
-            Escolher Membro
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setMode('email');
-              setErrorMsg('');
-            }}
-            className={`flex-1 py-2 rounded-lg transition ${
-              mode === 'email' ? 'bg-white text-blue-600 shadow-2xs' : 'hover:text-slate-900'
-            }`}
-          >
-            Entrar com E-mail
+            Membros ({users.length})
           </button>
           <button
             type="button"
@@ -176,70 +214,38 @@ export function LoginModal({ users, onLogin, onRegister }) {
           </button>
         </div>
 
-        {/* Modo 1: Escolher Membro da Lista + Senha */}
-        {mode === 'select' && (
-          <form onSubmit={handleQuickLogin} className="space-y-4 animate-fade-in">
+        {/* MODO 1: ENTRAR COM NOME OU E-MAIL (Mais simples e intuitivo) */}
+        {mode === 'direct' && (
+          <form onSubmit={handleDirectLogin} className="space-y-4 animate-fade-in">
             <div>
-              <label className="text-xs font-bold text-slate-700 uppercase tracking-wider block mb-1.5">
-                Selecione quem é você:
-              </label>
-              <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1 border border-slate-200 rounded-2xl p-2 bg-slate-50/50">
-                {users.map((u) => {
-                  const isSelected = selectedUser?.id === u.id;
-                  const isAdmin = u.is_admin === 1 || u.role?.toLowerCase().includes('gestor') || u.role?.toLowerCase().includes('chefe');
-                  const isDev = u.role?.toLowerCase().includes('desenvolvedor') || u.role?.toLowerCase().includes('dev');
-
-                  return (
-                    <button
-                      key={u.id}
-                      type="button"
-                      onClick={() => setSelectedUser(u)}
-                      className={`w-full p-2 rounded-xl flex items-center justify-between text-left transition ${
-                        isSelected
-                          ? 'bg-blue-600 text-white shadow-xs font-semibold'
-                          : 'bg-white hover:bg-slate-100 text-slate-700 border border-slate-100'
-                      }`}
-                    >
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        <div
-                          className="w-7 h-7 rounded-full text-white font-bold flex items-center justify-center text-[10px] shadow-2xs shrink-0"
-                          style={{ backgroundColor: isSelected ? '#1e40af' : u.avatar_color }}
-                        >
-                          {getUserInitials(u.name)}
-                        </div>
-                        <div className="min-w-0 truncate">
-                          <div className="text-xs font-bold truncate flex items-center gap-1">
-                            <span>{u.name}</span>
-                            {isAdmin && <Crown className="w-3 h-3 text-amber-400 shrink-0" />}
-                            {!isAdmin && isDev && <Code2 className="w-3 h-3 text-blue-300 shrink-0" />}
-                          </div>
-                          <div className={`text-[10px] truncate ${isSelected ? 'text-blue-100' : 'text-slate-500'}`}>
-                            {isAdmin ? '👑 Gestor / Chefe' : (isDev ? '💻 Desenvolvedor' : u.role || 'Membro')}
-                          </div>
-                        </div>
-                      </div>
-                      {isSelected && <Check className="w-4 h-4 text-white shrink-0" />}
-                    </button>
-                  );
-                })}
+              <label className="text-xs font-bold text-slate-700 block mb-1">Seu Nome ou E-mail</label>
+              <div className="relative">
+                <User className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  required
+                  autoFocus
+                  value={loginIdentifier}
+                  onChange={(e) => setLoginIdentifier(e.target.value)}
+                  placeholder="Ex: Carlos ou carlos@empresa.com"
+                  className="w-full pl-9 pr-3 py-2 text-xs border border-slate-200 rounded-xl focus:border-blue-500 focus:outline-hidden"
+                />
               </div>
             </div>
 
             <div>
               <div className="flex items-center justify-between mb-1">
-                <label className="text-xs font-bold text-slate-700">Digite sua Senha / PIN</label>
-                <span className="text-[10px] text-slate-400 font-medium">Padrão inicial: <strong>1234</strong></span>
+                <label className="text-xs font-bold text-slate-700">Sua Senha</label>
               </div>
               <div className="relative">
                 <KeyRound className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                 <input
                   type="password"
                   required
-                  autoFocus
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Ex: 1234"
-                  className="w-full pl-9 pr-3 py-2 text-sm border border-slate-200 rounded-xl focus:border-blue-500 focus:outline-hidden"
+                  placeholder="Digite sua senha"
+                  className="w-full pl-9 pr-3 py-2 text-xs border border-slate-200 rounded-xl focus:border-blue-500 focus:outline-hidden"
                 />
               </div>
             </div>
@@ -250,51 +256,128 @@ export function LoginModal({ users, onLogin, onRegister }) {
               className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow-xs transition flex items-center justify-center gap-2 disabled:opacity-50"
             >
               <LogIn className="w-4 h-4" />
-              {loading ? 'Validando acesso...' : 'Entrar no Planner'}
+              {loading ? 'Entrando...' : 'Entrar no Planner'}
             </button>
+
+            <div className="text-center pt-1">
+              <button
+                type="button"
+                onClick={() => setMode('register')}
+                className="text-xs text-blue-600 hover:underline font-semibold"
+              >
+                Primeira vez aqui? Crie seu usuário agora →
+              </button>
+            </div>
           </form>
         )}
 
-        {/* Modo 2: E-mail e Senha */}
-        {mode === 'email' && (
-          <form onSubmit={handleEmailLogin} className="space-y-4 animate-fade-in">
+        {/* MODO 2: ESCOLHER MEMBRO DA LISTA COM BUSCA */}
+        {mode === 'select' && (
+          <form onSubmit={handleQuickLogin} className="space-y-4 animate-fade-in">
             <div>
-              <label className="text-xs font-bold text-slate-700 block mb-1">E-mail corporativo</label>
-              <input
-                type="email"
-                required
-                autoFocus
-                value={emailInput}
-                onChange={(e) => setEmailInput(e.target.value)}
-                placeholder="seu.nome@empresa.com"
-                className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:border-blue-500 focus:outline-hidden"
-              />
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                  Selecione seu perfil:
+                </label>
+                <span className="text-[10px] text-slate-400 font-medium">{filteredUsers.length} encontrados</span>
+              </div>
+
+              {/* Campo de Busca Rápida */}
+              <div className="relative mb-2">
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={searchMember}
+                  onChange={(e) => setSearchMember(e.target.value)}
+                  placeholder="Buscar pelo nome..."
+                  className="w-full pl-8 pr-3 py-1.5 text-xs border border-slate-200 rounded-lg focus:border-blue-500 focus:outline-hidden bg-slate-50"
+                />
+              </div>
+
+              {filteredUsers.length === 0 ? (
+                <div className="p-4 text-center border border-dashed border-slate-200 rounded-xl text-slate-500 text-xs">
+                  Nenhum membro encontrado.
+                  <button
+                    type="button"
+                    onClick={() => setMode('register')}
+                    className="block mx-auto mt-1 text-blue-600 font-bold hover:underline"
+                  >
+                    Cadastrar Novo Membro
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-1.5 max-h-44 overflow-y-auto pr-1 border border-slate-200 rounded-2xl p-2 bg-slate-50/50">
+                  {filteredUsers.map((u) => {
+                    const isSelected = selectedUser?.id === u.id;
+                    const isAdmin = u.is_admin === 1 || u.role?.toLowerCase().includes('gestor') || u.role?.toLowerCase().includes('chefe');
+                    const isDev = u.role?.toLowerCase().includes('desenvolvedor') || u.role?.toLowerCase().includes('dev');
+
+                    return (
+                      <button
+                        key={u.id}
+                        type="button"
+                        onClick={() => setSelectedUser(u)}
+                        className={`w-full p-2 rounded-xl flex items-center justify-between text-left transition ${
+                          isSelected
+                            ? 'bg-blue-600 text-white shadow-xs font-semibold'
+                            : 'bg-white hover:bg-slate-100 text-slate-700 border border-slate-100'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <div
+                            className="w-7 h-7 rounded-full text-white font-bold flex items-center justify-center text-[10px] shadow-2xs shrink-0"
+                            style={{ backgroundColor: isSelected ? '#1e40af' : u.avatar_color }}
+                          >
+                            {getUserInitials(u.name)}
+                          </div>
+                          <div className="min-w-0 truncate">
+                            <div className="text-xs font-bold truncate flex items-center gap-1">
+                              <span>{u.name}</span>
+                              {isAdmin && <Crown className="w-3 h-3 text-amber-400 shrink-0" />}
+                              {!isAdmin && isDev && <Code2 className="w-3 h-3 text-blue-300 shrink-0" />}
+                            </div>
+                            <div className={`text-[10px] truncate ${isSelected ? 'text-blue-100' : 'text-slate-500'}`}>
+                              {isAdmin ? '👑 Gestor / Chefe' : (isDev ? '💻 Desenvolvedor' : u.role || 'Membro')}
+                            </div>
+                          </div>
+                        </div>
+                        {isSelected && <Check className="w-4 h-4 text-white shrink-0" />}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </div>
 
             <div>
-              <label className="text-xs font-bold text-slate-700 block mb-1">Senha</label>
-              <input
-                type="password"
-                required
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="Sua senha"
-                className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:border-blue-500 focus:outline-hidden"
-              />
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-xs font-bold text-slate-700">Digite sua Senha</label>
+              </div>
+              <div className="relative">
+                <KeyRound className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="password"
+                  required
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Sua senha cadastrada"
+                  className="w-full pl-9 pr-3 py-2 text-xs border border-slate-200 rounded-xl focus:border-blue-500 focus:outline-hidden"
+                />
+              </div>
             </div>
 
             <button
               type="submit"
-              disabled={loading}
+              disabled={loading || !selectedUser}
               className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow-xs transition flex items-center justify-center gap-2 disabled:opacity-50"
             >
               <LogIn className="w-4 h-4" />
-              {loading ? 'Verificando...' : 'Entrar com E-mail'}
+              {loading ? 'Validando...' : `Entrar como ${selectedUser ? selectedUser.name : 'Membro'}`}
             </button>
           </form>
         )}
 
-        {/* Modo 3: Cadastro de Novo Membro com Definição Segura por Prefixo de Senha */}
+        {/* MODO 3: NOVO CADASTRO */}
         {mode === 'register' && (
           <form onSubmit={handleRegister} className="space-y-3 animate-fade-in">
             <div>
@@ -305,7 +388,7 @@ export function LoginModal({ users, onLogin, onRegister }) {
                 autoFocus
                 value={regName}
                 onChange={(e) => setRegName(e.target.value)}
-                placeholder="Ex: Roberto Gomes"
+                placeholder="Ex: Carlos Ferreira"
                 className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:border-blue-500 focus:outline-hidden"
               />
             </div>
@@ -329,7 +412,7 @@ export function LoginModal({ users, onLogin, onRegister }) {
                   required
                   value={regPassword}
                   onChange={(e) => setRegPassword(e.target.value)}
-                  placeholder="Defina sua senha"
+                  placeholder="Mínimo 3 dígitos"
                   className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:border-blue-500 focus:outline-hidden"
                 />
               </div>
@@ -341,7 +424,7 @@ export function LoginModal({ users, onLogin, onRegister }) {
                 type="email"
                 value={regEmail}
                 onChange={(e) => setRegEmail(e.target.value)}
-                placeholder="roberto@empresa.com"
+                placeholder="carlos@empresa.com"
                 className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:border-blue-500 focus:outline-hidden"
               />
             </div>

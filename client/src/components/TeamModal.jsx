@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { X, Users, Crown, Shield, Trash2, Edit2, Check, UserPlus, Code2, KeyRound } from 'lucide-react';
+import React, { useState, useRef } from 'react';
+import { X, Users, Crown, Shield, Trash2, Edit2, Check, UserPlus, Code2, KeyRound, Download, Upload, Database } from 'lucide-react';
 import { getUserInitials } from '../utils/helpers';
 
 export function TeamModal({
@@ -14,9 +14,48 @@ export function TeamModal({
   const [editRole, setEditRole] = useState('');
   const [editIsAdmin, setEditIsAdmin] = useState(false);
   const [editPassword, setEditPassword] = useState('');
+  const [backupStatus, setBackupStatus] = useState('');
+  const fileInputRef = useRef(null);
 
   // Verifica se o usuário atual logado é Gestor/Chefe
   const isCurrentAdmin = currentUser?.is_admin === 1 || currentUser?.role?.toLowerCase().includes('gestor') || currentUser?.role?.toLowerCase().includes('chefe');
+
+  const handleDownloadBackup = () => {
+    window.open('/api/system/backup', '_blank');
+  };
+
+  const handleRestoreBackup = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      setBackupStatus('Restaurando dados...');
+      const text = await file.text();
+      const json = JSON.parse(text);
+
+      const token = localStorage.getItem('planner_token');
+      const res = await fetch('/api/system/restore', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(json),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Erro ao restaurar');
+      }
+
+      setBackupStatus('✅ Dados restaurados! Recarregando...');
+      setTimeout(() => {
+        window.location.reload();
+      }, 1000);
+    } catch (err) {
+      setBackupStatus(`❌ ${err.message}`);
+    }
+  };
 
   const startEditing = (u) => {
     setEditingUserId(u.id);
@@ -249,6 +288,44 @@ export function TeamModal({
             );
           })}
         </div>
+
+        {/* Cópia de Segurança / Backup do Banco (Apenas para Gestor) */}
+        {isCurrentAdmin && (
+          <div className="p-3 bg-slate-50 border border-slate-200 rounded-2xl space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-bold text-slate-700 flex items-center gap-1.5">
+                <Database className="w-3.5 h-3.5 text-blue-600" />
+                Cópia de Segurança dos Dados
+              </span>
+              {backupStatus && <span className="text-[10px] font-semibold text-blue-600">{backupStatus}</span>}
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleDownloadBackup}
+                className="flex-1 py-1.5 px-2 bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 text-xs font-semibold rounded-lg transition flex items-center justify-center gap-1.5 shadow-2xs"
+              >
+                <Download className="w-3.5 h-3.5 text-emerald-600" />
+                Baixar Backup (JSON)
+              </button>
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="flex-1 py-1.5 px-2 bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 text-xs font-semibold rounded-lg transition flex items-center justify-center gap-1.5 shadow-2xs"
+              >
+                <Upload className="w-3.5 h-3.5 text-blue-600" />
+                Restaurar Backup
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".json"
+                onChange={handleRestoreBackup}
+                className="hidden"
+              />
+            </div>
+          </div>
+        )}
 
         {/* Rodapé */}
         <div className="pt-2 border-t border-slate-100">
